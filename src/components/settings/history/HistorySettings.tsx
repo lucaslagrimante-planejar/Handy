@@ -15,6 +15,7 @@ import { formatDateTime } from "@/utils/dateFormat";
 import { AudioPlayer, AudioPlayerGroup } from "../../ui/AudioPlayer";
 import { Button } from "../../ui/Button";
 import { copyToClipboard } from "./clipboard";
+import { MeetingHistory } from "./MeetingHistory";
 
 const IconButton: React.FC<{
   onClick: () => void;
@@ -267,6 +268,7 @@ export const HistorySettings: React.FC = () => {
 
   return (
     <div className="max-w-3xl w-full mx-auto space-y-6">
+      <MeetingHistory />
       <div className="space-y-2">
         <div className="px-4 flex items-center justify-between">
           <div>

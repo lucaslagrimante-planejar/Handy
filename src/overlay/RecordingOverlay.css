@@ -50,9 +50,9 @@
      the card's max footprint (--ov-work-w for compact, --ov-open-w for Live),
      since the card is anchored flush to the screen edge in CSS. Keep overlay.rs
      in sync when these change. */
-  --ov-rest-w: 172px; /* resting compact pill (minimal, recording) -- roomy enough
+  --ov-rest-w: 200px; /* resting compact pill (minimal, recording) -- roomy enough
                          for the English working label before the grow starts */
-  --ov-pill-w: 184px; /* base width / Live pill before it opens or collapses */
+  --ov-pill-w: 200px; /* base width / Live pill before it opens or collapses */
   --ov-work-w: 216px; /* working pill (transcribing / polishing) -- wide enough to
                          center longer labels; shared by Live (collapsed) + minimal */
   --ov-open-w: 392px; /* Live panel, expanded */
@@ -468,4 +468,87 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Meeting mode -------------------------------------------------------------- */
+
+/* Dictation → meeting switch, next to cancel. */
+.smeet svg.smeet-icon {
+  width: 13px;
+  height: 13px;
+}
+/* A call was detected while dictating: invite the switch. */
+.smeet.suggest {
+  background: var(--s-accent);
+  color: var(--color-background);
+  animation: smeet-pulse 1.6s ease-in-out infinite;
+}
+@keyframes smeet-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--s-accent) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--s-accent) 0%, transparent);
+  }
+}
+/* The running meeting: wide enough for the timer and the stop button. */
+.scard.compact.cmeeting {
+  width: var(--ov-work-w);
+}
+.scard.cmeeting .stimer {
+  opacity: 1;
+}
+.smeet-live {
+  color: var(--s-accent);
+  display: flex;
+  align-items: center;
+}
+.smeet-live svg {
+  width: 16px;
+  height: 16px;
+}
+.sstop svg {
+  width: 10px;
+  height: 10px;
+}
+/* Invite / AI-step prompts: label + action button + dismiss. Sized for the
+   wider "invite"/"done" overlay window (overlay.rs OVERLAY_INVITE_WIDTH). */
+.scard.compact.cprompt {
+  width: 330px;
+}
+.sprompt {
+  height: var(--ov-base-h);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 9px 0 14px;
+}
+.sprompt-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sbtn {
+  flex: none;
+  height: 24px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--s-accent);
+  color: var(--color-background);
+  font: 600 12px var(--s-font);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: transform 100ms ease;
+}
+.sbtn:hover {
+  transform: scale(1.04);
+}
+.sbtn:active {
+  transform: scale(0.96);
 }

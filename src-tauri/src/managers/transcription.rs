@@ -240,6 +240,13 @@ impl Drop for StreamWorkerGuard {
     }
 }
 
+/// A meeting transcribes utterance after utterance; unloading between them
+/// would reload the model every few seconds.
+fn meeting_in_progress(app: &AppHandle) -> bool {
+    app.try_state::<Arc<crate::meeting::MeetingManager>>()
+        .is_some_and(|meeting| meeting.is_active())
+}
+
 #[derive(Clone)]
 pub struct TranscriptionManager {
     /// The transcribe-cpp engine: owns the worker process, its model, and
@@ -273,10 +280,30 @@ pub struct TranscriptionManager {
     /// yet. This prevents a second worker from starting after finalize/cancel
     /// closes the router but before the first worker has fully exited.
     active_stream_worker: Arc<AtomicU64>,
+    /// False for a background instance (meeting mode) whose model loads and
+    /// unloads must not show up as the app's model state.
+    emits_model_state: bool,
 }
 
 impl TranscriptionManager {
     pub fn new(app_handle: &AppHandle, model_manager: Arc<ModelManager>) -> Result<Self> {
+        Self::with_model_state_events(app_handle, model_manager, true)
+    }
+
+    /// A second engine with its own worker process and model, independent of
+    /// the dictation model; used by meeting mode.
+    pub fn new_background(
+        app_handle: &AppHandle,
+        model_manager: Arc<ModelManager>,
+    ) -> Result<Self> {
+        Self::with_model_state_events(app_handle, model_manager, false)
+    }
+
+    fn with_model_state_events(
+        app_handle: &AppHandle,
+        model_manager: Arc<ModelManager>,
+        emits_model_state: bool,
+    ) -> Result<Self> {
         let manager = Self {
             engine: EngineSupervisor::new(!transcribe_gpu_disabled_for_host()),
             onnx: Arc::new(Mutex::new(None)),
@@ -293,6 +320,7 @@ impl TranscriptionManager {
             stream_active: Arc::new(AtomicBool::new(false)),
             next_stream_worker_id: Arc::new(AtomicU64::new(1)),
             active_stream_worker: Arc::new(AtomicU64::new(0)),
+            emits_model_state,
         };
 
         // Start the idle watcher
@@ -320,11 +348,12 @@ impl TranscriptionManager {
                         continue;
                     }
 
-                    // While recording, keep the idle timer fresh so the
-                    // model is never unloaded mid-session.
+                    // While recording or in a meeting, keep the idle timer
+                    // fresh so the model is never unloaded mid-session.
                     let is_recording = app_handle_cloned
                         .try_state::<Arc<AudioRecordingManager>>()
-                        .is_some_and(|a| a.is_recording());
+                        .is_some_and(|a| a.is_recording())
+                        || meeting_in_progress(&app_handle_cloned);
                     if is_recording {
                         manager_cloned.touch_activity();
                         continue;
@@ -367,6 +396,14 @@ impl TranscriptionManager {
         }
 
         Ok(manager)
+    }
+
+    fn emit_model_state(&self, event: ModelStateEvent) -> tauri::Result<()> {
+        if self.emits_model_state {
+            self.app_handle.emit("model-state-changed", event)
+        } else {
+            Ok(())
+        }
     }
 
     /// Lock the ONNX engine mutex, recovering from poison if a previous transcription panicked.
@@ -417,15 +454,12 @@ impl TranscriptionManager {
             "Transcription model '{}' is no longer loaded: {}",
             model_id, error
         );
-        let _ = self.app_handle.emit(
-            "model-state-changed",
-            ModelStateEvent {
-                event_type: "unloaded".to_string(),
-                model_id: None,
-                model_name: None,
-                error: Some(error.to_string()),
-            },
-        );
+        let _ = self.emit_model_state(ModelStateEvent {
+            event_type: "unloaded".to_string(),
+            model_id: None,
+            model_name: None,
+            error: Some(error.to_string()),
+        });
     }
 
     /// Atomically check whether a model load is in progress and, if not, mark
@@ -478,15 +512,12 @@ impl TranscriptionManager {
         }
 
         // Emit unloaded event
-        let _ = self.app_handle.emit(
-            "model-state-changed",
-            ModelStateEvent {
-                event_type: "unloaded".to_string(),
-                model_id: None,
-                model_name: None,
-                error: None,
-            },
-        );
+        let _ = self.emit_model_state(ModelStateEvent {
+            event_type: "unloaded".to_string(),
+            model_id: None,
+            model_name: None,
+            error: None,
+        });
         unloading
     }
 
@@ -509,6 +540,7 @@ impl TranscriptionManager {
         let settings = get_settings(&self.app_handle);
         if settings.model_unload_timeout == ModelUnloadTimeout::Immediately
             && self.is_model_loaded()
+            && !meeting_in_progress(&self.app_handle)
         {
             info!("Immediately unloading model after {}", context);
             self.request_unload();
@@ -535,29 +567,23 @@ impl TranscriptionManager {
         debug!("Starting to load model: {}", model_id);
 
         // Emit loading started event
-        let _ = self.app_handle.emit(
-            "model-state-changed",
-            ModelStateEvent {
-                event_type: "loading_started".to_string(),
-                model_id: Some(model_id.to_string()),
-                model_name: None,
-                error: None,
-            },
-        );
+        let _ = self.emit_model_state(ModelStateEvent {
+            event_type: "loading_started".to_string(),
+            model_id: Some(model_id.to_string()),
+            model_name: None,
+            error: None,
+        });
 
         let model_info = match self.model_manager.get_model_info(model_id) {
             Some(model_info) => model_info,
             None => {
                 let error_msg = format!("Model not found: {}", model_id);
-                let _ = self.app_handle.emit(
-                    "model-state-changed",
-                    ModelStateEvent {
-                        event_type: "loading_failed".to_string(),
-                        model_id: Some(model_id.to_string()),
-                        model_name: None,
-                        error: Some(error_msg.clone()),
-                    },
-                );
+                let _ = self.emit_model_state(ModelStateEvent {
+                    event_type: "loading_failed".to_string(),
+                    model_id: Some(model_id.to_string()),
+                    model_name: None,
+                    error: Some(error_msg.clone()),
+                });
                 return Err(anyhow::anyhow!(error_msg));
             }
         };
@@ -565,15 +591,12 @@ impl TranscriptionManager {
         // Every failure after loading starts must emit a terminal event so the
         // frontend can never remain in its loading state.
         let emit_loading_failed = |error_msg: &str| {
-            let _ = self.app_handle.emit(
-                "model-state-changed",
-                ModelStateEvent {
-                    event_type: "loading_failed".to_string(),
-                    model_id: Some(model_id.to_string()),
-                    model_name: Some(model_info.name.clone()),
-                    error: Some(error_msg.to_string()),
-                },
-            );
+            let _ = self.emit_model_state(ModelStateEvent {
+                event_type: "loading_failed".to_string(),
+                model_id: Some(model_id.to_string()),
+                model_name: Some(model_info.name.clone()),
+                error: Some(error_msg.to_string()),
+            });
         };
 
         if !model_info.is_downloaded {
@@ -754,15 +777,12 @@ impl TranscriptionManager {
         self.touch_activity();
 
         // Emit loading completed event
-        let _ = self.app_handle.emit(
-            "model-state-changed",
-            ModelStateEvent {
-                event_type: "loading_completed".to_string(),
-                model_id: Some(model_id.to_string()),
-                model_name: Some(model_info.name.clone()),
-                error: None,
-            },
-        );
+        let _ = self.emit_model_state(ModelStateEvent {
+            event_type: "loading_completed".to_string(),
+            model_id: Some(model_id.to_string()),
+            model_name: Some(model_info.name.clone()),
+            error: None,
+        });
 
         let load_duration = load_start.elapsed();
         debug!(
@@ -1481,15 +1501,12 @@ impl TranscriptionManager {
                     *current_model = None;
                 }
 
-                let _ = self.app_handle.emit(
-                    "model-state-changed",
-                    ModelStateEvent {
-                        event_type: "unloaded".to_string(),
-                        model_id: None,
-                        model_name: None,
-                        error: Some(format!("Engine panicked: {}", panic_msg)),
-                    },
-                );
+                let _ = self.emit_model_state(ModelStateEvent {
+                    event_type: "unloaded".to_string(),
+                    model_id: None,
+                    model_name: None,
+                    error: Some(format!("Engine panicked: {}", panic_msg)),
+                });
 
                 return Err(anyhow::anyhow!(
                     "Transcription engine panicked: {}. The model has been unloaded and will reload on next attempt.",

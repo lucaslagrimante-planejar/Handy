@@ -588,6 +588,16 @@ impl AudioRecordingManager {
         if !settings.mute_while_recording {
             return;
         }
+        // Never silence the system during a meeting: the call audio is what
+        // the meeting captures. Checked before taking our own locks, since
+        // `MeetingManager::start_with` calls `remove_mute` after activating.
+        if self
+            .app_handle
+            .try_state::<Arc<crate::meeting::MeetingManager>>()
+            .is_some_and(|meeting| meeting.is_active())
+        {
+            return;
+        }
 
         // Lock order: is_open before mute_state (matches stop_microphone_stream).
         let is_open = self.is_open.lock().unwrap();
@@ -1068,6 +1078,13 @@ impl AudioRecordingManager {
 
     /// Cancel any ongoing recording without returning audio samples
     pub fn cancel_recording(&self) {
+        let _ = self.take_recording();
+    }
+
+    /// Cancel any ongoing recording like [`Self::cancel_recording`], but hand
+    /// back what was captured so far (meeting mode adopts it). Any stop still
+    /// in flight sees the cancellation and discards its samples.
+    pub fn take_recording(&self) -> Option<Vec<f32>> {
         self.invalidate_recording_readiness();
         self.cancel_generation.fetch_add(1, Ordering::AcqRel);
         let mut state = self.state.lock().unwrap();
@@ -1077,9 +1094,12 @@ impl AudioRecordingManager {
                 self.set_state(&mut state, RecordingState::Idle);
                 drop(state);
 
-                if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
-                    let _ = rec.stop(); // Discard the result
-                }
+                let samples = self
+                    .recorder
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .and_then(|rec| rec.stop().ok());
 
                 *self.is_recording.lock().unwrap() = false;
 
@@ -1091,11 +1111,13 @@ impl AudioRecordingManager {
                         self.stop_microphone_stream();
                     }
                 }
+                samples
             }
             RecordingState::Stopping => {
                 debug!("Cancellation requested while recording is stopping");
+                None
             }
-            RecordingState::Idle => {}
+            RecordingState::Idle => None,
         }
     }
 }

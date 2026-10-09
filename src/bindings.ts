@@ -538,6 +538,127 @@ async showMainWindowCommand() : Promise<Result<null, string>> {
 async cancelOperation() : Promise<void> {
     await TAURI_INVOKE("cancel_operation");
 },
+async startMeeting() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_meeting") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Turn the dictation in progress into a meeting, keeping its audio.
+ */
+async convertToMeeting() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("convert_to_meeting") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async stopMeeting() : Promise<void> {
+    await TAURI_INVOKE("stop_meeting");
+},
+async dismissMeetingInvite() : Promise<void> {
+    await TAURI_INVOKE("dismiss_meeting_invite");
+},
+async getMeetingStatus() : Promise<MeetingStatus> {
+    return await TAURI_INVOKE("get_meeting_status");
+},
+/**
+ * Run the AI step (revised transcript, summary, minutes) for a finished
+ * meeting, identified by its folder name.
+ */
+async summarizeMeeting(name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("summarize_meeting", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async openMeetingFolder(name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_meeting_folder", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Meetings for the History tab, newest first.
+ */
+async listMeetings() : Promise<MeetingInfo[]> {
+    return await TAURI_INVOKE("list_meetings");
+},
+/**
+ * Provider and model the AI step will use (never the key).
+ */
+async getMeetingAiProvider() : Promise<AiProviderInfo | null> {
+    return await TAURI_INVOKE("get_meeting_ai_provider");
+},
+/**
+ * The best transcript of a meeting: revised, else final, else live.
+ */
+async getMeetingTranscript(name: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_meeting_transcript", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Open one of the meeting's documents (summary, minutes, transcripts).
+ */
+async openMeetingFile(name: string, file: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_meeting_file", { name, file }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async openMeetingsFolder() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_meetings_folder") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Delete only what the AI step generated, so it can be redone.
+ */
+async deleteMeetingAiFiles(name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_meeting_ai_files", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Write the final transcript of an interrupted meeting, or retry speaker
+ * separation.
+ */
+async finalizeMeeting(name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("finalize_meeting", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteMeeting(name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_meeting", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async isPortable() : Promise<boolean> {
     return await TAURI_INVOKE("is_portable");
 },
@@ -916,10 +1037,8 @@ async updateRecordingRetentionPeriod(period: string) : Promise<Result<null, stri
 }
 },
 /**
- * Checks if the Mac is a laptop by detecting battery presence
- * 
- * This uses pmset to check for battery information.
- * Returns true if a battery is detected (laptop), false otherwise (desktop)
+ * Stub implementation for non-macOS platforms
+ * Always returns false since laptop detection is macOS-specific
  */
 async isLaptop() : Promise<Result<boolean, string>> {
     try {
@@ -950,6 +1069,10 @@ streamTextEvent: "stream-text-event"
 
 /** user-defined types **/
 
+/**
+ * What the AI step will use, shown next to its button. Never the key.
+ */
+export type AiProviderInfo = { provider: string; model: string; has_key: boolean }
 /**
  * The container-level `serde(default)` (backed by the `Default` impl below)
  * guarantees every field — including ones added in the future — falls back to
@@ -1059,6 +1182,45 @@ key_down: number; key_up: number; flags_changed: number; mouse: number; duration
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
+export type MeetingInfo = { 
+/**
+ * Folder name, used as the meeting id.
+ */
+name: string; 
+/**
+ * Start time, Unix seconds.
+ */
+timestamp: number; duration_secs: number; speakers: string[]; lines: number; preview: string; state: MeetingState; 
+/**
+ * Speakers were separated by the diarization model.
+ */
+diarized: boolean; 
+/**
+ * Which of [`OPENABLE_FILES`] exist.
+ */
+files: string[] }
+export type MeetingState = 
+/**
+ * Still recording.
+ */
+"recording" | 
+/**
+ * Stopped; the last lines and speaker separation are being written.
+ */
+"finishing" | 
+/**
+ * Stopped without the final transcript (app closed or crashed mid-meeting).
+ */
+"unfinished" | 
+/**
+ * Final transcript written; the AI step has not run.
+ */
+"transcribed" | "summarizing" | "summarized"
+export type MeetingStatus = { active: boolean; 
+/**
+ * Seconds since the meeting began, including adopted dictation audio.
+ */
+elapsed_secs: number }
 export type ModelInfo = { id: string; name: string; description: string; filename: string; source: ModelSource; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean; supports_streaming: boolean; supports_language_detection: boolean }
 export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null }
 /**

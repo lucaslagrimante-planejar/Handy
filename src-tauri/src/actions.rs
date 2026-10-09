@@ -833,6 +833,18 @@ impl ShortcutAction for CancelAction {
     }
 }
 
+// Meeting Action: each press starts or stops a meeting recording, regardless
+// of the dictation activation mode.
+struct MeetingAction;
+
+impl ShortcutAction for MeetingAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        app.state::<Arc<crate::meeting::MeetingManager>>().toggle();
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
+
 // Test Action
 struct TestAction;
 
@@ -872,6 +884,10 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     map.insert(
         "cancel".to_string(),
         Arc::new(CancelAction) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
+        "meeting".to_string(),
+        Arc::new(MeetingAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "test".to_string(),

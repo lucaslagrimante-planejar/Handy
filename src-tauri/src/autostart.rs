@@ -19,6 +19,13 @@ use tauri_plugin_autostart::ManagerExt;
 /// startup. This mirrors the pre-existing behavior of ignoring
 /// enable()/disable() results.
 pub fn apply_autostart(app: &AppHandle, enabled: bool) {
+    // Dev builds must not repoint the login entry at target/debug, which only
+    // runs alongside the vite dev server.
+    if cfg!(debug_assertions) {
+        log::debug!("Skipping autostart update in debug build");
+        return;
+    }
+
     #[cfg(target_os = "macos")]
     if macos::login_item_api_available() {
         macos::remove_plugin_launch_agent(app);

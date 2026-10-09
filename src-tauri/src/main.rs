@@ -29,6 +29,10 @@ fn main() {
     if handy_app_lib::engine_supervisor::is_worker_invocation() {
         std::process::exit(handy_app_lib::engine_supervisor::run_worker());
     }
+    // Meeting speaker separation runs Sortformer in a one-shot child process.
+    if handy_app_lib::meeting::diarize::is_diarize_invocation() {
+        std::process::exit(handy_app_lib::meeting::diarize::run_diarize_process());
+    }
 
     let cli_args = CliArgs::parse();
     handy_app_lib::run(cli_args)

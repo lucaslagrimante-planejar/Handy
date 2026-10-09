@@ -928,6 +928,16 @@ pub fn get_default_settings() -> AppSettings {
             current_binding: "escape".to_string(),
         },
     );
+    bindings.insert(
+        "meeting".to_string(),
+        ShortcutBinding {
+            id: "meeting".to_string(),
+            name: "Meeting".to_string(),
+            description: "Starts or stops transcribing a meeting.".to_string(),
+            default_binding: "ctrl+alt+m".to_string(),
+            current_binding: "ctrl+alt+m".to_string(),
+        },
+    );
 
     AppSettings {
         settings_schema_version: default_settings_schema_version(),

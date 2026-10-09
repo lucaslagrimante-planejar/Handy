@@ -14,6 +14,7 @@ mod helpers;
 mod input;
 mod llm_client;
 mod managers;
+pub mod meeting;
 mod memory;
 mod overlay;
 mod paste_tx;
@@ -216,6 +217,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
     app_handle.manage(tray::TrayState::new());
+    app_handle.manage(Arc::new(meeting::MeetingManager::new(app_handle.clone())));
+    #[cfg(target_os = "linux")]
+    meeting::spawn_call_watcher(app_handle.clone());
 
     // Note: Shortcuts are NOT initialized here.
     // The frontend is responsible for calling the `initialize_shortcuts` command
@@ -299,6 +303,21 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             }
             "copy_last_transcript" => {
                 tray::copy_last_transcript(app);
+            }
+            "meetings_folder" => match meeting::meetings_root(app) {
+                Ok(root) => {
+                    let _ = std::fs::create_dir_all(&root);
+                    meeting::open_meeting_dir(app, &root);
+                }
+                Err(e) => log::warn!("Meetings folder unavailable: {e:#}"),
+            },
+            id if id.starts_with("meeting_summarize:") || id.starts_with("meeting_open:") => {
+                let (action, name) = id.split_once(':').unwrap();
+                match meeting::meeting_dir(app, name) {
+                    Ok(dir) if action == "meeting_summarize" => meeting::start_summary(app, &dir),
+                    Ok(dir) => meeting::open_meeting_dir(app, &dir),
+                    Err(e) => log::warn!("Meeting menu action failed: {e:#}"),
+                }
             }
             "unload_model" => {
                 let transcription_manager = app.state::<Arc<TranscriptionManager>>();
@@ -717,6 +736,21 @@ pub fn run(cli_args: CliArgs) {
             trigger_update_check,
             show_main_window_command,
             commands::cancel_operation,
+            commands::meeting::start_meeting,
+            commands::meeting::convert_to_meeting,
+            commands::meeting::stop_meeting,
+            commands::meeting::dismiss_meeting_invite,
+            commands::meeting::get_meeting_status,
+            commands::meeting::summarize_meeting,
+            commands::meeting::open_meeting_folder,
+            commands::meeting::list_meetings,
+            commands::meeting::get_meeting_ai_provider,
+            commands::meeting::get_meeting_transcript,
+            commands::meeting::open_meeting_file,
+            commands::meeting::open_meetings_folder,
+            commands::meeting::delete_meeting_ai_files,
+            commands::meeting::finalize_meeting,
+            commands::meeting::delete_meeting,
             commands::is_portable,
             commands::is_update_checks_locked,
             commands::get_app_dir_path,

@@ -7,7 +7,12 @@
     "model": "Modelo",
     "quit": "Sair",
     "cancel": "Cancelar",
-    "secureInputWarning": "⚠ Atalhos bloqueados pelo Secure Input"
+    "secureInputWarning": "⚠ Atalhos bloqueados pelo Secure Input",
+    "meetings": "Reuniões",
+    "meetingSummarize": "Gerar resumo e ata",
+    "meetingSummarizing": "Gerando resumo...",
+    "meetingOpen": "Abrir pasta",
+    "meetingsFolder": "Abrir pasta de reuniões"
   },
   "sidebar": {
     "general": "Geral",
@@ -179,6 +184,10 @@
           "transcribe_with_post_process": {
             "name": "Tecla de Pós-Processamento",
             "description": "Opcional: Uma tecla de atalho dedicada que sempre aplica pós-processamento com IA à sua transcrição."
+          },
+          "meeting": {
+            "name": "Atalho de Reunião",
+            "description": "Inicia ou encerra a transcrição de uma reunião: seu microfone e o áudio do computador, salvos durante a gravação."
           }
         },
         "errors": {
@@ -477,7 +486,50 @@
       "retranscribe": "Re-transcrever",
       "retranscribeError": "Falha ao re-transcrever. Por favor, tente novamente.",
       "transcribing": "Transcrevendo...",
-      "transcriptionFailed": "A transcrição falhou. Você pode re-transcrever usando o ícone de tentar novamente."
+      "transcriptionFailed": "A transcrição falhou. Você pode re-transcrever usando o ícone de tentar novamente.",
+      "meetings": {
+        "title": "Reuniões",
+        "openFolder": "Abrir pasta de reuniões",
+        "openMeetingFolder": "Abrir pasta desta reunião",
+        "copy": "Copiar transcrição (revisada, se houver)",
+        "delete": "Excluir reunião",
+        "deleteConfirm": "Excluir esta reunião inteira? Áudio, transcrição original e conteúdo gerado por IA serão apagados. Não é possível desfazer.",
+        "state": {
+          "recording": "Gravando…",
+          "finishing": "Finalizando transcrição…",
+          "unfinished": "Transcrição incompleta",
+          "transcribed": "Transcrição",
+          "summarizing": "Transcrição",
+          "summarized": "Transcrição"
+        },
+        "diarized": "Falantes separados",
+        "notDiarized": "Falantes não separados",
+        "docs": {
+          "summary": "Resumo",
+          "minutes": "Ata",
+          "revised": "Transcrição revisada",
+          "revisedSrt": "Legenda revisada (SRT)",
+          "original": "Transcrição original",
+          "originalSrt": "Legenda original (SRT)"
+        },
+        "unfinished": "A reunião foi interrompida antes de terminar a transcrição. O que foi falado está salvo.",
+        "finalize": "Concluir transcrição",
+        "finalizeError": "Falha ao concluir a transcrição: {{error}}",
+        "retryDiarization": "Tentar separar os falantes de novo",
+        "aiPending": "Pendente: revisão da transcrição, resumo e ata",
+        "generate": "Gerar com IA",
+        "complete": "Completar com IA",
+        "generating": "Gerando revisão, resumo e ata…",
+        "provider": "Usa o provedor do Pós-processamento: {{provider}} · {{model}}.",
+        "providerMissing": "Configure um provedor, modelo e chave na seção Pós-processamento.",
+        "textOnly": "Envia apenas o texto da transcrição, nunca o áudio. A transcrição original não é alterada.",
+        "redo": "Refazer com IA",
+        "redoConfirm": "Apagar o conteúdo gerado por IA e gerar de novo com {{model}}? A transcrição original fica intacta.",
+        "deleteAi": "Excluir conteúdo de IA",
+        "deleteAiConfirm": "Apagar resumo, ata e transcrição revisada? A transcrição original e o áudio ficam intactos, e você pode gerar de novo depois (inclusive com outro modelo).",
+        "aiError": "Falha na etapa de IA: {{error}}",
+        "openError": "Não foi possível abrir o arquivo: {{error}}"
+      }
     },
     "debug": {
       "title": "Depuração",
@@ -709,7 +761,19 @@
   "overlay": {
     "transcribing": "Transcrevendo...",
     "processing": "Processando...",
-    "loadingModel": "Carregando modelo..."
+    "loadingModel": "Carregando modelo...",
+    "meeting": {
+      "start": "Trocar para reunião",
+      "stop": "Encerrar reunião",
+      "invite": "Chamada no {{app}}: transcrever a reunião?",
+      "inviteAction": "Transcrever",
+      "dismiss": "Dispensar",
+      "done": "Reunião transcrita",
+      "summarize": "Resumo e ata",
+      "openFolder": "Abrir pasta",
+      "summarizing": "Gerando resumo e ata...",
+      "suggest": "Chamada detectada: trocar para reunião"
+    }
   },
   "whatsNew": {
     "title": "Novidades no Handy v{{version}}"

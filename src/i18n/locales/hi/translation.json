@@ -7,7 +7,12 @@
     "model": "मॉडल",
     "quit": "बाहर निकलें",
     "cancel": "रद्द करें",
-    "secureInputWarning": "⚠ Secure Input ने शॉर्टकट ब्लॉक किए हैं"
+    "secureInputWarning": "⚠ Secure Input ने शॉर्टकट ब्लॉक किए हैं",
+    "meetings": "Meetings",
+    "meetingSummarize": "Generate summary and minutes",
+    "meetingSummarizing": "Generating summary...",
+    "meetingOpen": "Open folder",
+    "meetingsFolder": "Open meetings folder"
   },
   "sidebar": {
     "general": "सामान्य",
@@ -179,6 +184,10 @@
           "transcribe_with_post_process": {
             "name": "पोस्ट-प्रोसेसिंग हॉटकी",
             "description": "वैकल्पिक: एक अलग हॉटकी जो आपके ट्रांसक्रिप्शन पर हमेशा AI पोस्ट-प्रोसेसिंग लागू करती है."
+          },
+          "meeting": {
+            "name": "Meeting Shortcut",
+            "description": "Starts or stops transcribing a meeting: your microphone and the computer's audio, saved as it goes."
           }
         },
         "errors": {
@@ -477,7 +486,50 @@
       "retranscribe": "फिर से ट्रांसक्राइब करें",
       "retranscribeError": "फिर से ट्रांसक्राइब नहीं किया जा सका. कृपया फिर से कोशिश करें.",
       "transcribing": "ट्रांसक्राइब हो रहा है...",
-      "transcriptionFailed": "ट्रांसक्रिप्शन नहीं हो सका. आप रीट्राई आइकन से फिर से ट्रांसक्राइब कर सकते हैं."
+      "transcriptionFailed": "ट्रांसक्रिप्शन नहीं हो सका. आप रीट्राई आइकन से फिर से ट्रांसक्राइब कर सकते हैं.",
+      "meetings": {
+        "title": "Meetings",
+        "openFolder": "Open meetings folder",
+        "openMeetingFolder": "Open this meeting's folder",
+        "copy": "Copy transcript (revised, if available)",
+        "delete": "Delete meeting",
+        "deleteConfirm": "Delete this whole meeting? Audio, original transcript and AI-generated content will be removed. This cannot be undone.",
+        "state": {
+          "recording": "Recording…",
+          "finishing": "Finishing transcript…",
+          "unfinished": "Transcript incomplete",
+          "transcribed": "Transcript",
+          "summarizing": "Transcript",
+          "summarized": "Transcript"
+        },
+        "diarized": "Speakers separated",
+        "notDiarized": "Speakers not separated",
+        "docs": {
+          "summary": "Summary",
+          "minutes": "Minutes",
+          "revised": "Revised transcript",
+          "revisedSrt": "Revised subtitles (SRT)",
+          "original": "Original transcript",
+          "originalSrt": "Original subtitles (SRT)"
+        },
+        "unfinished": "The meeting was interrupted before the transcript was finished. What was said is saved.",
+        "finalize": "Finish transcript",
+        "finalizeError": "Failed to finish the transcript: {{error}}",
+        "retryDiarization": "Try separating speakers again",
+        "aiPending": "Pending: transcript review, summary and minutes",
+        "generate": "Generate with AI",
+        "complete": "Complete with AI",
+        "generating": "Generating review, summary and minutes…",
+        "provider": "Uses the Post Processing provider: {{provider}} · {{model}}.",
+        "providerMissing": "Set a provider, model and API key in Post Processing.",
+        "textOnly": "Only the transcript text is sent, never the audio. The original transcript is not changed.",
+        "redo": "Redo with AI",
+        "redoConfirm": "Delete the AI-generated content and generate it again with {{model}}? The original transcript stays intact.",
+        "deleteAi": "Delete AI content",
+        "deleteAiConfirm": "Delete the summary, minutes and revised transcript? The original transcript and audio stay intact, and you can generate them again later (even with another model).",
+        "aiError": "AI step failed: {{error}}",
+        "openError": "Could not open the file: {{error}}"
+      }
     },
     "debug": {
       "title": "डिबग",
@@ -712,7 +764,19 @@
   "overlay": {
     "transcribing": "ट्रांसक्राइब हो रहा है...",
     "processing": "प्रोसेस हो रहा है...",
-    "loadingModel": "मॉडल लोड हो रहा है..."
+    "loadingModel": "मॉडल लोड हो रहा है...",
+    "meeting": {
+      "start": "Switch to meeting",
+      "stop": "End meeting",
+      "invite": "{{app}} call: transcribe the meeting?",
+      "inviteAction": "Transcribe",
+      "dismiss": "Dismiss",
+      "done": "Meeting transcribed",
+      "summarize": "Summary and minutes",
+      "openFolder": "Open folder",
+      "summarizing": "Generating summary...",
+      "suggest": "Call detected: switch to meeting"
+    }
   },
   "secureInput": {
     "blockedWithCulprit_one": "{{name}} शायद 1 शॉर्टकट को ब्लॉक कर रहा है",

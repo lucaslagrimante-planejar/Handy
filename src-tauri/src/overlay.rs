@@ -2,6 +2,7 @@ use crate::input;
 use crate::settings;
 use crate::settings::{OverlayPosition, OverlayStyle};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
 
@@ -53,13 +54,29 @@ const OVERLAY_HEIGHT: f64 = 50.0;
 const OVERLAY_STREAM_WIDTH: f64 = 400.0;
 const OVERLAY_STREAM_HEIGHT: f64 = 120.0;
 
+// Meeting pills with buttons — the call invite and the "meeting transcribed"
+// prompt for the AI step: room for a label, an action button and dismiss.
+const OVERLAY_INVITE_WIDTH: f64 = 340.0;
+
 /// Overlay window size (logical) for a given UI state.
 fn overlay_dimensions(state: &str) -> (f64, f64) {
-    if state == "streaming" {
-        (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT)
-    } else {
-        (OVERLAY_WIDTH, OVERLAY_HEIGHT)
+    match state {
+        "streaming" => (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT),
+        "invite" | "done" => (OVERLAY_INVITE_WIDTH, OVERLAY_HEIGHT),
+        _ => (OVERLAY_WIDTH, OVERLAY_HEIGHT),
     }
+}
+
+/// State last shown by the overlay, or `None` while it is hidden.
+static CURRENT_OVERLAY_STATE: Mutex<Option<String>> = Mutex::new(None);
+
+/// What the overlay is showing right now (`"recording"`, `"meeting"`, ...).
+pub fn current_overlay_state() -> Option<String> {
+    CURRENT_OVERLAY_STATE.lock().unwrap().clone()
+}
+
+pub fn is_overlay_enabled() -> bool {
+    OVERLAY_ENABLED.load(Ordering::Relaxed)
 }
 
 static LAST_MIC_LEVEL_EMIT: AtomicU64 = AtomicU64::new(0);
@@ -485,7 +502,7 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
     }
 }
 
-fn show_overlay_state(app_handle: &AppHandle, state: &str) {
+pub fn show_overlay_state(app_handle: &AppHandle, state: &str) {
     // Whether the overlay shows at all is governed by overlay_style; position
     // only chooses Top vs Bottom placement. Checked here (off the main thread)
     // so the common overlay-disabled case never pays for a main-thread hop.
@@ -514,6 +531,7 @@ fn show_overlay_state_on_main(app_handle: &AppHandle, state: &str) {
         // Invalidate any delayed hide still in flight from a previous session
         // (see `hide_recording_overlay`).
         OVERLAY_SHOW_GENERATION.fetch_add(1, Ordering::SeqCst);
+        *CURRENT_OVERLAY_STATE.lock().unwrap() = Some(state.to_string());
 
         #[cfg(target_os = "linux")]
         let shown_with_layer_shell = if LAYER_SHELL_ACTIVE.load(Ordering::SeqCst) {
@@ -630,6 +648,16 @@ pub fn show_processing_overlay(app_handle: &AppHandle) {
     show_overlay_state(app_handle, "processing");
 }
 
+/// Shows the compact meeting overlay (icon, level, timer, stop button)
+pub fn show_meeting_overlay(app_handle: &AppHandle) {
+    show_overlay_state(app_handle, "meeting");
+}
+
+/// Shows the "a call is in progress, transcribe it?" invite
+pub fn show_meeting_invite(app_handle: &AppHandle) {
+    show_overlay_state(app_handle, "invite");
+}
+
 /// Updates the overlay window position based on current settings
 pub fn update_overlay_position(app_handle: &AppHandle) {
     // Positioning queries monitors/cursor (GDK/Xlib on Linux) and moves the
@@ -693,6 +721,7 @@ pub fn hide_recording_overlay(app_handle: &AppHandle) {
         // Snapshot before doing anything observable, so any show that lands
         // after this point invalidates the delayed hide below.
         let scheduled_at = OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst);
+        *CURRENT_OVERLAY_STATE.lock().unwrap() = None;
         // Emit event to trigger fade-out animation
         let _ = overlay_window.emit("hide-overlay", ());
         // Hide the window after a short delay to allow animation to complete,

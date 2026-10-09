@@ -34,8 +34,16 @@ pub fn handle_shortcut_event(
 ) {
     let settings = get_settings(app);
 
-    // Transcribe bindings are handled by the coordinator.
+    // Transcribe bindings are handled by the coordinator, except that during a
+    // meeting the same shortcut ends the meeting.
     if is_transcribe_binding(binding_id) {
+        let meeting = app.state::<Arc<crate::meeting::MeetingManager>>();
+        if meeting.is_active() {
+            if is_pressed {
+                meeting.stop();
+            }
+            return;
+        }
         if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
             coordinator.send_input(
                 binding_id,
