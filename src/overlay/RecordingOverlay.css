@@ -552,3 +552,153 @@
 .sbtn:active {
   transform: scale(0.96);
 }
+
+/* Post-meeting work (finishing the transcript, AI step): room for the label. */
+.scard.compact.cwide {
+  width: 248px;
+}
+/* Post-meeting card: title + note, then a row of actions. Sized for the
+   overlay window of "done"/"summarized" (overlay.rs OVERLAY_CARD_HEIGHT). */
+.scard.compact.cresult {
+  box-sizing: border-box;
+  width: 330px;
+  border-radius: 18px;
+  padding: 10px 10px 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  animation: sresult-in 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes sresult-in {
+  from {
+    transform: scale(0.94);
+    opacity: 0;
+  }
+}
+.sresult-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.sresult-badge {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--s-accent);
+  background: var(--s-accent-soft);
+}
+.sresult-badge svg {
+  width: 13px;
+  height: 13px;
+}
+.sresult-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.sresult-title {
+  font: 600 13px var(--s-font);
+  color: var(--color-text);
+}
+.sresult-note {
+  font-size: 11px;
+  color: var(--s-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sresult-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 36px; /* under the title, past the badge */
+}
+.sresult-actions .sbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.sresult-actions .sbtn svg {
+  width: 11px;
+  height: 11px;
+}
+.sbtn.ghost {
+  background: var(--s-hair);
+  color: var(--color-text);
+  font-weight: 500;
+}
+.sbtn.ghost:hover {
+  background: var(--s-accent-soft);
+}
+.sbtn.plain {
+  background: transparent;
+  color: var(--s-muted);
+  font-weight: 500;
+  margin-left: auto;
+  padding: 0 6px;
+}
+.sbtn.plain:hover {
+  color: var(--color-text);
+}
+
+/* Stop options of the running meeting: three full-width choices under the
+   header (overlay.rs OVERLAY_STOP_MENU_HEIGHT). */
+.sresult-badge.smeet-live svg {
+  width: 14px;
+  height: 14px;
+}
+.sstop-options {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.sopt {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--s-hair);
+  color: var(--color-text);
+  font: 500 12px var(--s-font);
+  text-align: start;
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    transform 100ms ease;
+}
+.sopt svg {
+  width: 11px;
+  height: 11px;
+  flex: none;
+}
+.sopt:hover {
+  background: var(--s-accent-soft);
+}
+.sopt:active {
+  transform: scale(0.98);
+}
+.sopt.primary {
+  background: var(--s-accent);
+  color: var(--color-background);
+  font-weight: 600;
+}
+.sopt.primary:hover {
+  background: color-mix(in srgb, var(--s-accent) 88%, var(--color-text));
+}
+.sopt.plain {
+  background: transparent;
+  color: var(--s-muted);
+}
+.sopt.plain:hover {
+  background: var(--s-hair);
+  color: var(--color-text);
+}

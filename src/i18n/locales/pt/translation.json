@@ -768,11 +768,23 @@
       "invite": "Chamada no {{app}}: transcrever a reunião?",
       "inviteAction": "Transcrever",
       "dismiss": "Dispensar",
-      "done": "Reunião transcrita",
-      "summarize": "Resumo e ata",
+      "done": "Transcrição finalizada",
+      "summarize": "Resumir com IA",
       "openFolder": "Abrir pasta",
       "summarizing": "Gerando resumo e ata...",
-      "suggest": "Chamada detectada: trocar para reunião"
+      "suggest": "Chamada detectada: trocar para reunião",
+      "finishing": "Finalizando a transcrição...",
+      "summarized": "Resumo e ata prontos",
+      "copySummary": "Copiar resumo",
+      "copied": "Copiado",
+      "later": "Depois",
+      "stopTitle": "Encerrar reunião",
+      "stopRecorded": "{{time}} gravados",
+      "keepRecording": "Continuar gravando",
+      "stopTranscribe": "Finalizar e transcrever",
+      "stopSummarize": "Finalizar, transcrever e resumir",
+      "stopNothing": "Encerrar sem fazer nada",
+      "stopNothingHint": "Áudio e transcrição ao vivo ficam salvos; finalize depois pelo histórico"
     }
   },
   "whatsNew": {

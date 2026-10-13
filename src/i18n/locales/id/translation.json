@@ -771,11 +771,23 @@
       "invite": "{{app}} call: transcribe the meeting?",
       "inviteAction": "Transcribe",
       "dismiss": "Dismiss",
-      "done": "Meeting transcribed",
-      "summarize": "Summary and minutes",
+      "done": "Transcription finished",
+      "summarize": "Summarize with AI",
       "openFolder": "Open folder",
       "summarizing": "Generating summary...",
-      "suggest": "Call detected: switch to meeting"
+      "suggest": "Call detected: switch to meeting",
+      "finishing": "Finishing transcript...",
+      "summarized": "Summary and minutes ready",
+      "copySummary": "Copy summary",
+      "copied": "Copied",
+      "later": "Later",
+      "stopTitle": "End meeting",
+      "stopRecorded": "{{time}} recorded",
+      "keepRecording": "Keep recording",
+      "stopTranscribe": "Finish and transcribe",
+      "stopSummarize": "Finish, transcribe and summarize",
+      "stopNothing": "End without processing",
+      "stopNothingHint": "Audio and live transcript are kept; finish it later from History"
     }
   },
   "secureInput": {

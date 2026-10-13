@@ -18,13 +18,24 @@ type OverlayState =
   | "streaming"
   | "transcribing"
   | "processing"
-  // Meeting mode: the running meeting, the invite shown when a call is
-  // detected, the prompt for the AI step once a meeting is transcribed, and
-  // that step in progress.
+  // Meeting mode: the running meeting and the invite shown when a call is
+  // detected; then the post-meeting card: transcription finishing, the offer
+  // of the AI step, that step in progress, and its result.
   | "meeting"
+  | "stopmenu"
   | "invite"
+  | "finishing"
   | "done"
-  | "summarizing";
+  | "summarizing"
+  | "summarized";
+
+// Post-meeting card sent by the backend (`meeting-card`).
+interface MeetingCard {
+  name: string;
+  note: string | null;
+  // Part of "transcribe and summarize": the loading shows the step.
+  chained: boolean;
+}
 
 // Number of reactive bars in the waveform (the simple, smoothed style shared by
 // every overlay form). Mic levels arrive as 16 FFT buckets; we take the first N.
@@ -76,8 +87,16 @@ const RecordingOverlay: React.FC = () => {
   // meeting button of the dictation in progress because of it.
   const [inviteApp, setInviteApp] = useState("");
   const [callSuggested, setCallSuggested] = useState(false);
-  // Folder name of the meeting the "done" prompt refers to.
-  const [doneMeeting, setDoneMeeting] = useState("");
+  // Meeting the post-meeting card refers to.
+  const [card, setCard] = useState<MeetingCard>({
+    name: "",
+    note: null,
+    chained: false,
+  });
+  // Last state shown, read by the show handler (registered once).
+  const stateRef = useRef<OverlayState | null>(null);
+  // "Copied" feedback on the summary button.
+  const [copied, setCopied] = useState(false);
 
   const smoothedLevelsRef = useRef<number[]>(Array(16).fill(0));
   // Live-text scroll-back: the text region "sticks" to the newest line while the
@@ -114,17 +133,23 @@ const RecordingOverlay: React.FC = () => {
         } catch {
           // Keep the previous/default placement if settings can't be read.
         }
-        if (overlayState === "meeting") {
+        const inMeeting = (s: OverlayState | null) =>
+          s === "meeting" || s === "stopmenu";
+        if (inMeeting(overlayState)) {
           // Levels come from the meeting capture, which is already running.
-          smoothedLevelsRef.current = Array(16).fill(0);
-          setLevels(Array(WAVE_BARS).fill(0));
+          // Going between the pill and the stop menu keeps the timer as is.
+          if (!inMeeting(stateRef.current)) {
+            smoothedLevelsRef.current = Array(16).fill(0);
+            setLevels(Array(WAVE_BARS).fill(0));
+            setElapsed(0);
+          }
           setCaptureReady(true);
-          setElapsed(0);
           commands
             .getMeetingStatus()
             .then((status) => setElapsed(status.elapsed_secs))
             .catch(() => {});
         }
+        stateRef.current = overlayState;
         setState(overlayState);
         if (overlayState === "streaming") {
           setPhase("listening");
@@ -147,9 +172,13 @@ const RecordingOverlay: React.FC = () => {
         setCallSuggested(true);
       });
 
-      const unlistenDone = await listen<string>("meeting-done", (event) => {
-        setDoneMeeting(event.payload);
-      });
+      const unlistenCard = await listen<MeetingCard>(
+        "meeting-card",
+        (event) => {
+          setCard(event.payload);
+          setCopied(false);
+        },
+      );
 
       const unlistenReady = await listen("recording-ready", () => {
         setElapsed(0);
@@ -209,7 +238,7 @@ const RecordingOverlay: React.FC = () => {
         unlistenShow();
         unlistenHide();
         unlistenInvite();
-        unlistenDone();
+        unlistenCard();
         unlistenReady();
         unlistenLevel();
         unlistenStream();
@@ -224,7 +253,8 @@ const RecordingOverlay: React.FC = () => {
 
   // Elapsed capture timer starts only once microphone samples are flowing.
   useEffect(() => {
-    if (state !== "streaming" && state !== "meeting") return;
+    if (state !== "streaming" && state !== "meeting" && state !== "stopmenu")
+      return;
     if (!isVisible || !captureReady) return;
     const id = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => clearInterval(id);
@@ -442,6 +472,64 @@ const RecordingOverlay: React.FC = () => {
     </button>
   );
 
+  const checkIcon = (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M3.5 8.5 L6.5 11.5 L12.5 4.5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+    </svg>
+  );
+
+  const sparkIcon = (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M8 1.5 L9.4 6.6 L14.5 8 L9.4 9.4 L8 14.5 L6.6 9.4 L1.5 8 L6.6 6.6 Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+
+  const copyIcon = (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <rect
+        x="5.5"
+        y="5.5"
+        width="8"
+        height="8"
+        rx="1.6"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        fill="none"
+      />
+      <path
+        d="M10.5 3.5 V3.2 C10.5 2.5 10 2 9.3 2 H3.7 C3 2 2.5 2.5 2.5 3.2 V8.8 C2.5 9.5 3 10 3.7 10 H4"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        fill="none"
+      />
+    </svg>
+  );
+
+  const stopIcon = (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <rect x="4" y="4" width="8" height="8" rx="1.5" fill="currentColor" />
+    </svg>
+  );
+
+  const folderIcon = (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M2 4.5 C2 3.7 2.6 3 3.4 3 H6.2 L7.6 4.5 H12.6 C13.4 4.5 14 5.2 14 6 V11.6 C14 12.4 13.4 13 12.6 13 H3.4 C2.6 13 2 12.4 2 11.6 Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+
   const stageClass = `ov-stage ${position} ov-fade ${isVisible ? "show" : ""}`;
 
   // ---- Meeting: icon | waveform | timer + stop. Fixed and compact; the
@@ -459,7 +547,7 @@ const RecordingOverlay: React.FC = () => {
                 className="sx sstop"
                 aria-label={t("overlay.meeting.stop")}
                 title={t("overlay.meeting.stop")}
-                onClick={() => commands.stopMeeting()}
+                onClick={() => commands.showMeetingStopMenu(true)}
               >
                 <svg viewBox="0 0 16 16" aria-hidden="true">
                   <rect
@@ -479,47 +567,72 @@ const RecordingOverlay: React.FC = () => {
     );
   }
 
-  // ---- Prompts with a button: the call invite, and the AI step once a
-  // meeting is transcribed.
-  if (state === "invite" || state === "done") {
-    const invite = state === "invite";
+  // ---- Stop options of the running meeting: what to do once it ends.
+  if (state === "stopmenu") {
+    return (
+      <div dir={direction} className={stageClass}>
+        <div className="scard compact cresult cstop">
+          <div className="sresult-head">
+            <span className="sresult-badge smeet-live">{meetingIcon}</span>
+            <div className="sresult-text">
+              <span className="sresult-title">
+                {t("overlay.meeting.stopTitle")}
+              </span>
+              <span className="sresult-note">
+                {t("overlay.meeting.stopRecorded", { time: fmtTime(elapsed) })}
+              </span>
+            </div>
+            <button
+              className="sx"
+              aria-label={t("overlay.meeting.keepRecording")}
+              title={t("overlay.meeting.keepRecording")}
+              onClick={() => commands.showMeetingStopMenu(false)}
+            >
+              {closeIcon}
+            </button>
+          </div>
+          <div className="sstop-options">
+            <button
+              className="sopt primary"
+              onClick={() => commands.stopMeeting("transcribe")}
+            >
+              {checkIcon}
+              {t("overlay.meeting.stopTranscribe")}
+            </button>
+            <button
+              className="sopt"
+              onClick={() => commands.stopMeeting("summarize")}
+            >
+              {sparkIcon}
+              {t("overlay.meeting.stopSummarize")}
+            </button>
+            <button
+              className="sopt plain"
+              title={t("overlay.meeting.stopNothingHint")}
+              onClick={() => commands.stopMeeting("nothing")}
+            >
+              {stopIcon}
+              {t("overlay.meeting.stopNothing")}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Call invite: label + action + dismiss.
+  if (state === "invite") {
     return (
       <div dir={direction} className={stageClass}>
         <div className="scard compact cprompt">
           <div className="sprompt">
             <span className="smeet-live">{meetingIcon}</span>
             <span className="sprompt-label">
-              {invite
-                ? t("overlay.meeting.invite", { app: inviteApp })
-                : t("overlay.meeting.done")}
+              {t("overlay.meeting.invite", { app: inviteApp })}
             </span>
-            {invite ? (
-              <button className="sbtn" onClick={() => commands.startMeeting()}>
-                {t("overlay.meeting.inviteAction")}
-              </button>
-            ) : (
-              <>
-                <button
-                  className="sbtn"
-                  onClick={() => commands.summarizeMeeting(doneMeeting)}
-                >
-                  {t("overlay.meeting.summarize")}
-                </button>
-                <button
-                  className="sx"
-                  aria-label={t("overlay.meeting.openFolder")}
-                  title={t("overlay.meeting.openFolder")}
-                  onClick={() => commands.openMeetingFolder(doneMeeting)}
-                >
-                  <svg viewBox="0 0 16 16" aria-hidden="true">
-                    <path
-                      d="M2 4.5 C2 3.7 2.6 3 3.4 3 H6.2 L7.6 4.5 H12.6 C13.4 4.5 14 5.2 14 6 V11.6 C14 12.4 13.4 13 12.6 13 H3.4 C2.6 13 2 12.4 2 11.6 Z"
-                      fill="currentColor"
-                    />
-                  </svg>
-                </button>
-              </>
-            )}
+            <button className="sbtn" onClick={() => commands.startMeeting()}>
+              {t("overlay.meeting.inviteAction")}
+            </button>
             {dismissBtn}
           </div>
         </div>
@@ -527,11 +640,88 @@ const RecordingOverlay: React.FC = () => {
     );
   }
 
-  if (state === "summarizing") {
+  // ---- Post-meeting work in progress: spinner + label until it finishes.
+  if (state === "finishing" || state === "summarizing") {
     return (
       <div dir={direction} className={stageClass}>
-        <div className="scard compact cworking">
-          {workingRow(t("overlay.meeting.summarizing"), false)}
+        <div className="scard compact cworking cwide">
+          {workingRow(
+            (state === "finishing"
+              ? t("overlay.meeting.finishing")
+              : t("overlay.meeting.summarizing")) +
+              (card.chained
+                ? state === "finishing"
+                  ? " · 1/2"
+                  : " · 2/2"
+                : ""),
+            false,
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Post-meeting card: title + note, and a row of actions. Stays up until
+  // the user picks one.
+  if (state === "done" || state === "summarized") {
+    const done = state === "done";
+    const copySummary = async () => {
+      const result = await commands.copyMeetingSummary(card.name);
+      if (result.status === "ok") {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1600);
+      }
+    };
+    return (
+      <div dir={direction} className={stageClass}>
+        <div className="scard compact cresult">
+          <div className="sresult-head">
+            <span className="sresult-badge">{checkIcon}</span>
+            <div className="sresult-text">
+              <span className="sresult-title">
+                {done
+                  ? t("overlay.meeting.done")
+                  : t("overlay.meeting.summarized")}
+              </span>
+              {card.note && (
+                <span className="sresult-note" title={card.note}>
+                  {card.note}
+                </span>
+              )}
+            </div>
+            {dismissBtn}
+          </div>
+          <div className="sresult-actions">
+            {done ? (
+              <button
+                className="sbtn"
+                onClick={() => commands.summarizeMeeting(card.name)}
+              >
+                {sparkIcon}
+                {t("overlay.meeting.summarize")}
+              </button>
+            ) : (
+              <button className="sbtn" onClick={copySummary}>
+                {copied ? checkIcon : copyIcon}
+                {copied
+                  ? t("overlay.meeting.copied")
+                  : t("overlay.meeting.copySummary")}
+              </button>
+            )}
+            <button
+              className="sbtn ghost"
+              onClick={() => commands.openMeetingFolder(card.name)}
+            >
+              {folderIcon}
+              {t("overlay.meeting.openFolder")}
+            </button>
+            <button
+              className="sbtn plain"
+              onClick={() => commands.dismissMeetingInvite()}
+            >
+              {done ? t("overlay.meeting.later") : t("overlay.meeting.dismiss")}
+            </button>
+          </div>
         </div>
       </div>
     );

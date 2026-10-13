@@ -557,8 +557,14 @@ async convertToMeeting() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async stopMeeting() : Promise<void> {
-    await TAURI_INVOKE("stop_meeting");
+async stopMeeting(then: StopAction) : Promise<void> {
+    await TAURI_INVOKE("stop_meeting", { then });
+},
+/**
+ * Expand the meeting pill into the stop options (`open`), or collapse it.
+ */
+async showMeetingStopMenu(open: boolean) : Promise<void> {
+    await TAURI_INVOKE("show_meeting_stop_menu", { open });
 },
 async dismissMeetingInvite() : Promise<void> {
     await TAURI_INVOKE("dismiss_meeting_invite");
@@ -573,6 +579,17 @@ async getMeetingStatus() : Promise<MeetingStatus> {
 async summarizeMeeting(name: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("summarize_meeting", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Copy a meeting's summary to the clipboard.
+ */
+async copyMeetingSummary(name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("copy_meeting_summary", { name }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1315,6 +1332,23 @@ export type ShortcutActivation =
 "hold_or_toggle"
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type SoundTheme = "marimba" | "pop" | "custom"
+/**
+ * What happens once a meeting stops.
+ */
+export type StopAction = 
+/**
+ * Final transcript with speakers separated, then offer the AI step.
+ */
+"transcribe" | 
+/**
+ * Final transcript, then the AI step right away.
+ */
+"summarize" | 
+/**
+ * Keep the audio and the live transcript as they are; the meeting can
+ * be finished later from the History tab.
+ */
+"nothing"
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.
  */

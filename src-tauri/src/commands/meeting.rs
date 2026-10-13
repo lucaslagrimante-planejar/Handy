@@ -1,6 +1,6 @@
 use crate::meeting::history::{self, MeetingInfo};
 use crate::meeting::summary::{self, AiProviderInfo};
-use crate::meeting::{self, MeetingManager};
+use crate::meeting::{self, MeetingManager, StopAction};
 use serde::Serialize;
 use specta::Type;
 use std::sync::Arc;
@@ -38,8 +38,15 @@ pub fn convert_to_meeting(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 #[specta::specta]
-pub fn stop_meeting(app: AppHandle) {
-    manager(&app).stop();
+pub fn stop_meeting(app: AppHandle, then: StopAction) {
+    manager(&app).stop_with(then);
+}
+
+/// Expand the meeting pill into the stop options (`open`), or collapse it.
+#[tauri::command]
+#[specta::specta]
+pub fn show_meeting_stop_menu(app: AppHandle, open: bool) {
+    manager(&app).show_stop_menu(open);
 }
 
 #[tauri::command]
@@ -74,6 +81,14 @@ pub fn open_meeting_folder(app: AppHandle, name: String) -> Result<(), String> {
     let dir = crate::meeting::meeting_dir(&app, &name).map_err(|e| format!("{e:#}"))?;
     crate::meeting::open_meeting_dir(&app, &dir);
     Ok(())
+}
+
+/// Copy a meeting's summary to the clipboard.
+#[tauri::command]
+#[specta::specta]
+pub fn copy_meeting_summary(app: AppHandle, name: String) -> Result<(), String> {
+    let dir = crate::meeting::meeting_dir(&app, &name).map_err(|e| format!("{e:#}"))?;
+    crate::meeting::copy_summary(&app, &dir).map_err(|e| format!("{e:#}"))
 }
 
 /// Meetings for the History tab, newest first.

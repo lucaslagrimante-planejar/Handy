@@ -54,15 +54,21 @@ const OVERLAY_HEIGHT: f64 = 50.0;
 const OVERLAY_STREAM_WIDTH: f64 = 400.0;
 const OVERLAY_STREAM_HEIGHT: f64 = 120.0;
 
-// Meeting pills with buttons — the call invite and the "meeting transcribed"
-// prompt for the AI step: room for a label, an action button and dismiss.
+// Meeting pills with buttons — the call invite (label, action, dismiss) and
+// the post-meeting card (title, note and a row of actions).
 const OVERLAY_INVITE_WIDTH: f64 = 340.0;
+/// Post-meeting card with its actions row (RecordingOverlay.css `.cresult`).
+const OVERLAY_CARD_HEIGHT: f64 = 104.0;
+/// Meeting stop options: header plus three choices (`.cstop`).
+const OVERLAY_STOP_MENU_HEIGHT: f64 = 172.0;
 
 /// Overlay window size (logical) for a given UI state.
 fn overlay_dimensions(state: &str) -> (f64, f64) {
     match state {
         "streaming" => (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT),
-        "invite" | "done" => (OVERLAY_INVITE_WIDTH, OVERLAY_HEIGHT),
+        "invite" => (OVERLAY_INVITE_WIDTH, OVERLAY_HEIGHT),
+        "done" | "summarized" => (OVERLAY_INVITE_WIDTH, OVERLAY_CARD_HEIGHT),
+        "stopmenu" => (OVERLAY_INVITE_WIDTH, OVERLAY_STOP_MENU_HEIGHT),
         _ => (OVERLAY_WIDTH, OVERLAY_HEIGHT),
     }
 }
@@ -735,6 +741,8 @@ pub fn hide_recording_overlay(app_handle: &AppHandle) {
             }
             let _ = window_clone.hide();
         });
+        // A post-meeting card waiting under whatever was just hidden.
+        crate::meeting::restore_card(app_handle);
     }
 }
 

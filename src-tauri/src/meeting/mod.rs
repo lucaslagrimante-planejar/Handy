@@ -99,11 +99,29 @@ pub struct MeetingManager {
     /// Engine running [`MEETING_MODEL`], created on the first meeting and
     /// kept so later meetings reuse its worker process.
     engine: Mutex<Option<Arc<TranscriptionManager>>>,
+    /// The user closed the call invite; it stays away until the call ends.
+    invite_dismissed: AtomicBool,
+}
+
+/// What happens once a meeting stops.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "lowercase")]
+pub enum StopAction {
+    /// Final transcript with speakers separated, then offer the AI step.
+    #[default]
+    Transcribe,
+    /// Final transcript, then the AI step right away.
+    Summarize,
+    /// Keep the audio and the live transcript as they are; the meeting can
+    /// be finished later from the History tab.
+    Nothing,
 }
 
 struct ActiveMeeting {
     dir: PathBuf,
     stop: Arc<AtomicBool>,
+    /// Read by the transcriber once the captures end.
+    then: Arc<Mutex<StopAction>>,
     started: Instant,
     /// Dictation audio adopted when the meeting was converted from it.
     lead_in_ms: u64,
@@ -115,6 +133,7 @@ impl MeetingManager {
             app,
             active: Mutex::new(None),
             engine: Mutex::new(None),
+            invite_dismissed: AtomicBool::new(false),
         }
     }
 
@@ -145,6 +164,18 @@ impl MeetingManager {
             .unwrap()
             .as_ref()
             .map(|meeting| meeting.started.elapsed() + Duration::from_millis(meeting.lead_in_ms))
+    }
+
+    /// Expand the meeting pill into the stop options, or collapse it back.
+    pub fn show_stop_menu(&self, open: bool) {
+        if !self.is_active() || !overlay::is_overlay_enabled() {
+            return;
+        }
+        if open {
+            overlay::show_overlay_state(&self.app, "stopmenu");
+        } else {
+            overlay::show_meeting_overlay(&self.app);
+        }
     }
 
     /// Meeting shortcut: stop a running meeting, adopt a dictation in
@@ -204,6 +235,7 @@ impl MeetingManager {
             .clone();
 
         let stop = Arc::new(AtomicBool::new(false));
+        let then = Arc::new(Mutex::new(StopAction::default()));
         let lead_in = Arc::new(lead_in);
         let lead_in_ms = samples_to_ms(lead_in.len());
         let meter = Arc::new(Meter::default());
@@ -238,13 +270,19 @@ impl MeetingManager {
         let title = format!("Reunião {name}");
         let worker_dir = dir.clone();
         let app = self.app.clone();
+        let worker_then = then.clone();
         set_in_progress(&dir, true);
         thread::Builder::new()
             .name("meeting-transcriber".into())
             .spawn(move || {
                 let model = MeetingModel::pick(engine, dictation);
                 run_transcriber(&model, &worker_dir, &title, utterances_rx);
-                finish_meeting(&app, &worker_dir);
+                let then = *worker_then.lock().unwrap();
+                if then == StopAction::Nothing {
+                    info!("Meeting kept unfinished: {}", worker_dir.display());
+                } else {
+                    finish_meeting(&app, &worker_dir, then);
+                }
                 set_in_progress(&worker_dir, false);
                 meetings_changed(&app);
             })
@@ -263,6 +301,7 @@ impl MeetingManager {
         *active = Some(ActiveMeeting {
             dir: dir.clone(),
             stop,
+            then,
             started: Instant::now(),
             lead_in_ms,
         });
@@ -275,29 +314,45 @@ impl MeetingManager {
         Ok(dir)
     }
 
-    /// Signal the capture threads to stop. The transcriber drains the queued
-    /// utterances and runs speaker separation in the background.
+    /// Stop with the default action (shortcut, tray): transcribe.
     pub fn stop(&self) -> Option<PathBuf> {
+        self.stop_with(StopAction::Transcribe)
+    }
+
+    /// Signal the capture threads to stop. The transcriber drains the queued
+    /// utterances, then does `then` in the background.
+    pub fn stop_with(&self, then: StopAction) -> Option<PathBuf> {
         let meeting = self.active.lock().unwrap().take()?;
+        *meeting.then.lock().unwrap() = then;
         meeting.stop.store(true, Ordering::Release);
-        info!("Meeting stopping: {}", meeting.dir.display());
-        overlay::hide_recording_overlay(&self.app);
+        info!("Meeting stopping ({then:?}): {}", meeting.dir.display());
         set_tray_state(&self.app, TrayIconState::Idle);
-        notify(
-            "Reunião encerrada",
-            "Finalizando a transcrição e separando os falantes...",
-        );
+        if then == StopAction::Nothing {
+            overlay::hide_recording_overlay(&self.app);
+        } else if overlay::is_overlay_enabled() {
+            let chained = then == StopAction::Summarize;
+            show_card_step(&self.app, "finishing", &meeting.dir, None, chained);
+        } else {
+            overlay::hide_recording_overlay(&self.app);
+            notify(
+                "Reunião encerrada",
+                "Finalizando a transcrição e separando os falantes...",
+            );
+        }
         meetings_changed(&self.app);
         Some(meeting.dir)
     }
 
-    /// Hide the call invite or the "meeting transcribed" pill if still up.
+    /// The user closed the call invite or the post-meeting card. A dismissed
+    /// invite is not shown again during the same call.
     pub fn dismiss_invite(&self) {
-        if matches!(
-            overlay::current_overlay_state().as_deref(),
-            Some("invite" | "done")
-        ) {
-            overlay::hide_recording_overlay(&self.app);
+        match overlay::current_overlay_state().as_deref() {
+            Some("invite") => {
+                self.invite_dismissed.store(true, Ordering::Release);
+                overlay::hide_recording_overlay(&self.app);
+            }
+            state if is_card_stage(state) => dismiss_card(&self.app),
+            _ => {}
         }
     }
 }
@@ -536,125 +591,239 @@ fn run_transcriber(
     }
 }
 
-fn finish_meeting(app: &AppHandle, dir: &Path) {
+fn finish_meeting(app: &AppHandle, dir: &Path, then: StopAction) {
     let has_transcript =
         std::fs::metadata(dir.join(writer::TRANSCRIPT_JSONL)).is_ok_and(|meta| meta.len() > 0);
     if !has_transcript {
         info!("Meeting ended without speech: {}", dir.display());
+        dismiss_card(app);
         notify("Reunião finalizada", "Nenhuma fala foi detectada.");
         return;
     }
 
-    let (summary, body) = match diarize::diarize_meeting(dir) {
+    let note = match diarize::diarize_meeting(dir) {
         Ok(path) => {
             info!("Meeting transcript ready: {}", path.display());
-            ("Transcrição da reunião pronta", path.display().to_string())
+            None
         }
         Err(e) => {
             warn!("Speaker separation failed: {e:#}");
-            let body = match diarize::write_undiarized(dir) {
-                Ok(path) => format!("{}\n{e:#}", path.display()),
-                Err(write_err) => format!("{e:#}\n{write_err:#}"),
-            };
-            ("Transcrição pronta, sem separar falantes", body)
+            if let Err(write_err) = diarize::write_undiarized(dir) {
+                error!("Cannot write the final transcript: {write_err:#}");
+            }
+            Some("Sem separar falantes".to_string())
         }
     };
     meetings_changed(app);
-    offer_summary(app, dir, summary, &body);
+    if then == StopAction::Summarize {
+        summarize(app, dir, true);
+    } else {
+        offer_summary(app, dir, note);
+    }
 }
 
-/// How long the "meeting transcribed" pill waits for a click.
-const DONE_TIMEOUT: Duration = Duration::from_secs(60);
+/// Post-meeting card on the overlay. It stays up until the user acts on it,
+/// and comes back when something else borrowed the overlay meanwhile (a
+/// dictation, a call invite). Stages, in order: `finishing` (transcription
+/// and speaker separation), `done` (offer the AI step), `summarizing`,
+/// `summarized` (copy the summary, open the folder).
+#[derive(Clone, serde::Serialize)]
+struct MeetingCard {
+    stage: &'static str,
+    /// Meeting folder name.
+    name: String,
+    /// Shown under the title: a warning, or where the AI step sends the text.
+    note: Option<String>,
+    /// Part of "transcribe and summarize": the loading shows the step.
+    chained: bool,
+}
 
-/// Offer the AI step for a finished meeting: a pill on the overlay and a
-/// notification with the same buttons (it stays in the notification history).
-fn offer_summary(app: &AppHandle, dir: &Path, summary: &str, body: &str) {
-    use tauri::Emitter;
+const CARD_STAGES: &[&str] = &["finishing", "done", "summarizing", "summarized"];
 
+static CARD: Mutex<Option<MeetingCard>> = Mutex::new(None);
+
+fn is_card_stage(state: Option<&str>) -> bool {
+    state.is_some_and(|state| CARD_STAGES.contains(&state))
+}
+
+/// Show (or park, if the overlay is busy) the card of a meeting.
+fn show_card(app: &AppHandle, stage: &'static str, dir: &Path, note: Option<String>) {
+    show_card_step(app, stage, dir, note, false);
+}
+
+fn show_card_step(
+    app: &AppHandle,
+    stage: &'static str,
+    dir: &Path,
+    note: Option<String>,
+    chained: bool,
+) {
     let Some(name) = meeting_name(dir) else {
         return;
     };
-    if overlay::is_overlay_enabled() && overlay::current_overlay_state().is_none() {
-        let _ = app.emit_to("recording_overlay", "meeting-done", &name);
-        overlay::show_overlay_state(app, "done");
-        let app = app.clone();
-        thread::spawn(move || {
-            thread::sleep(DONE_TIMEOUT);
-            if overlay::current_overlay_state().as_deref() == Some("done") {
-                overlay::hide_recording_overlay(&app);
-            }
-        });
+    let card = MeetingCard {
+        stage,
+        name,
+        note,
+        chained,
+    };
+    *CARD.lock().unwrap() = Some(card.clone());
+    present_card(app, &card);
+}
+
+fn present_card(app: &AppHandle, card: &MeetingCard) {
+    use tauri::Emitter;
+
+    let free = match overlay::current_overlay_state().as_deref() {
+        None => true,
+        // The pill (or stop menu) of a meeting that already stopped.
+        Some("meeting" | "stopmenu") => !app.state::<Arc<MeetingManager>>().is_active(),
+        state => is_card_stage(state),
+    };
+    if !overlay::is_overlay_enabled() || !free {
+        return;
+    }
+    let _ = app.emit_to("recording_overlay", "meeting-card", card);
+    overlay::show_overlay_state(app, card.stage);
+}
+
+/// The user closed the card.
+pub fn dismiss_card(app: &AppHandle) {
+    CARD.lock().unwrap().take();
+    if is_card_stage(overlay::current_overlay_state().as_deref()) {
+        overlay::hide_recording_overlay(app);
+    }
+}
+
+/// Bring the parked card back once the overlay is free again. Called after
+/// every overlay hide; waits out the hide's fade first.
+pub fn restore_card(app: &AppHandle) {
+    if CARD.lock().unwrap().is_none() {
+        return;
+    }
+    let app = app.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(400));
+        let busy = overlay::current_overlay_state().is_some()
+            || app.state::<Arc<AudioRecordingManager>>().is_recording()
+            || app.state::<Arc<MeetingManager>>().is_active();
+        if busy {
+            return;
+        }
+        let card = CARD.lock().unwrap().clone();
+        if let Some(card) = card {
+            present_card(&app, &card);
+        }
+    });
+}
+
+/// Where the AI step sends the transcript, shown before the user opts in.
+fn ai_note(app: &AppHandle) -> Option<String> {
+    summary::provider_info(app).map(|ai| format!("IA: {} · {} · só o texto", ai.provider, ai.model))
+}
+
+/// Announce a finished meeting: the overlay card when the overlay is on, else
+/// a notification that stays on screen until the user acts on it.
+fn offer_summary(app: &AppHandle, dir: &Path, note: Option<String>) {
+    if overlay::is_overlay_enabled() {
+        show_card(app, "done", dir, note.or_else(|| ai_note(app)));
+        return;
     }
 
-    let body = match summary::provider_info(app) {
-        Some(ai) => format!(
-            "{body}\nResumo e ata usam {} · {} (só o texto, nunca o áudio).",
-            ai.provider, ai.model
-        ),
-        None => body.to_string(),
+    let summary = match &note {
+        Some(note) => format!("Transcrição finalizada · {note}"),
+        None => "Transcrição finalizada".to_string(),
     };
+    let body = dir.join(diarize::FINAL_MD).display().to_string();
     let app = app.clone();
     let dir = dir.to_path_buf();
     notify_with_actions(
-        summary,
+        &summary,
         &body,
-        &[("summarize", "Gerar resumo e ata"), ("open", "Abrir pasta")],
+        &[
+            ("transcript", "Abrir transcrição"),
+            ("summarize", "Gerar resumo e ata"),
+            ("dismiss", "Dispensar"),
+        ],
+        true,
         move |action| match action.as_str() {
+            "transcript" => open_meeting_file(&app, &dir.join(diarize::FINAL_MD)),
             "summarize" => start_summary(&app, &dir),
-            "open" => open_meeting_dir(&app, &dir),
             _ => {}
         },
     );
 }
 
-/// Run the AI step in the background, reporting progress on the overlay and
-/// the result as a notification.
+/// Run the AI step in the background, reporting progress and the result on
+/// the overlay card (or as notifications when the overlay is off).
 pub fn start_summary(app: &AppHandle, dir: &Path) {
+    summarize(app, dir, false);
+}
+
+/// `chained`: the second step of "transcribe and summarize".
+fn summarize(app: &AppHandle, dir: &Path, chained: bool) {
     let task = match summary::summarize_meeting(app.clone(), dir.to_path_buf()) {
         Ok(task) => task,
         Err(e) => {
             warn!("Meeting summary not started: {e:#}");
+            if overlay::is_overlay_enabled() {
+                show_card(app, "done", dir, Some(format!("{e:#}")));
+            } else {
+                notify("Falha ao gerar resumo e ata", &format!("{e:#}"));
+            }
             return;
         }
     };
-    if overlay::is_overlay_enabled()
-        && matches!(
-            overlay::current_overlay_state().as_deref(),
-            None | Some("done")
-        )
-    {
-        overlay::show_overlay_state(app, "summarizing");
+    if overlay::is_overlay_enabled() {
+        show_card_step(app, "summarizing", dir, None, chained);
     }
     meetings_changed(app);
     let app = app.clone();
     let dir = dir.to_path_buf();
     tauri::async_runtime::spawn(async move {
         let result = task.await;
-        if overlay::current_overlay_state().as_deref() == Some("summarizing") {
-            overlay::hide_recording_overlay(&app);
-        }
         meetings_changed(&app);
         match result {
             Ok(path) => {
                 info!("Meeting summary ready: {}", path.display());
-                let open_app = app.clone();
+                if overlay::is_overlay_enabled() {
+                    show_card(&app, "summarized", &dir, None);
+                    return;
+                }
                 notify_with_actions(
                     "Resumo e ata prontos",
                     &path.display().to_string(),
                     &[("open", "Abrir pasta")],
+                    false,
                     move |action| {
                         if action == "open" {
-                            open_meeting_dir(&open_app, &dir);
+                            open_meeting_dir(&app, &dir);
                         }
                     },
                 );
             }
             Err(e) => {
                 error!("Meeting summary failed: {e:#}");
-                notify("Falha ao gerar resumo e ata", &format!("{e:#}"));
+                if overlay::is_overlay_enabled() {
+                    show_card(&app, "done", &dir, Some(format!("Falha no resumo: {e:#}")));
+                } else {
+                    notify("Falha ao gerar resumo e ata", &format!("{e:#}"));
+                }
             }
         }
     });
+}
+
+/// Put a meeting's summary on the clipboard.
+pub fn copy_summary(app: &AppHandle, dir: &Path) -> Result<()> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+
+    let path = dir.join(summary::SUMMARY_MD);
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    app.clipboard()
+        .write_text(text)
+        .context("writing to the clipboard")
 }
 
 /// Write the final transcript of a meeting that stopped without it (the app
@@ -666,12 +835,13 @@ pub fn finalize_meeting(app: &AppHandle, dir: &Path) -> Result<()> {
     );
     set_in_progress(dir, true);
     meetings_changed(app);
+    show_card(app, "finishing", dir, None);
     let app = app.clone();
     let dir = dir.to_path_buf();
     thread::Builder::new()
         .name("meeting-finalize".into())
         .spawn(move || {
-            finish_meeting(&app, &dir);
+            finish_meeting(&app, &dir, StopAction::Transcribe);
             set_in_progress(&dir, false);
             meetings_changed(&app);
         })?;
@@ -710,9 +880,14 @@ pub fn meeting_dir(app: &AppHandle, name: &str) -> Result<PathBuf> {
 }
 
 pub fn open_meeting_dir(app: &AppHandle, dir: &Path) {
+    open_meeting_file(app, dir);
+}
+
+/// Open a meeting file or folder with the system's default app.
+fn open_meeting_file(app: &AppHandle, path: &Path) {
     use tauri_plugin_opener::OpenerExt;
-    if let Err(e) = app.opener().open_path(dir.to_string_lossy(), None::<&str>) {
-        warn!("Failed to open {}: {e}", dir.display());
+    if let Err(e) = app.opener().open_path(path.to_string_lossy(), None::<&str>) {
+        warn!("Failed to open {}: {e}", path.display());
     }
 }
 
@@ -791,12 +966,16 @@ fn notify(summary: &str, body: &str) {
 /// How often to look for a call in progress.
 #[cfg(target_os = "linux")]
 const CALL_POLL: Duration = Duration::from_secs(4);
-/// How long the invite stays up when ignored.
+/// Polls in a row without a call before it counts as ended. Answering,
+/// holding or switching devices drops the call's streams for a moment.
 #[cfg(target_os = "linux")]
-const INVITE_TIMEOUT: Duration = Duration::from_secs(20);
+const CALL_END_MISSES: u32 = 3;
 
-/// Watch for calls and offer to transcribe each one once. A call that was
-/// already offered (or transcribed) is not offered again until it ends.
+/// Watch for calls and offer to transcribe each one. The invite stays up for
+/// the whole call — ringing, answered, on hold — until the user dismisses it
+/// or starts the meeting; if dictation takes the overlay meanwhile, the
+/// invite comes back afterwards. It goes away on its own only when the call
+/// ends.
 #[cfg(target_os = "linux")]
 pub fn spawn_call_watcher(app: AppHandle) {
     use tauri::Emitter;
@@ -804,39 +983,70 @@ pub fn spawn_call_watcher(app: AppHandle) {
     let spawned = thread::Builder::new()
         .name("meeting-call-watcher".into())
         .spawn(move || {
-            let mut offered = false;
+            // App of the call in progress, kept through short detection gaps.
+            let mut call: Option<String> = None;
+            let mut misses = 0;
+            // A meeting ran during this call: do not offer it again.
+            let mut handled = false;
+            let mut announced = false;
             loop {
                 thread::sleep(CALL_POLL);
                 let manager = app.state::<Arc<MeetingManager>>();
                 if manager.is_active() {
-                    offered = true;
+                    handled = true;
                     continue;
                 }
-                if !overlay::is_overlay_enabled() {
-                    continue;
+
+                match detect::detect_call() {
+                    Some(found) => {
+                        misses = 0;
+                        if call.is_none() {
+                            info!("Call detected ({found})");
+                        }
+                        call = Some(found);
+                    }
+                    None if call.is_some() => {
+                        misses += 1;
+                        if misses < CALL_END_MISSES {
+                            continue;
+                        }
+                        info!("Call ended");
+                        call = None;
+                        handled = false;
+                        announced = false;
+                        manager.invite_dismissed.store(false, Ordering::Release);
+                        if overlay::current_overlay_state().as_deref() == Some("invite") {
+                            overlay::hide_recording_overlay(&app);
+                        }
+                        continue;
+                    }
+                    None => continue,
                 }
-                let Some(call) = detect::detect_call() else {
-                    offered = false;
+
+                let Some(name) = call.as_deref() else {
                     continue;
                 };
-                if offered {
+                if handled
+                    || manager.invite_dismissed.load(Ordering::Acquire)
+                    || !overlay::is_overlay_enabled()
+                {
                     continue;
                 }
-                offered = true;
-                info!("Call detected ({call}); offering meeting mode");
-
-                // While dictating, the overlay highlights its meeting button.
-                let _ = app.emit_to("recording_overlay", "meeting-invite", &call);
+                if !announced {
+                    // While dictating, the overlay highlights its meeting button.
+                    let _ = app.emit_to("recording_overlay", "meeting-invite", name);
+                    announced = true;
+                }
                 let recording = app.state::<Arc<AudioRecordingManager>>().is_recording();
-                if recording || overlay::current_overlay_state().is_some() {
-                    continue;
+                // The invite outranks the post-meeting card, which comes back
+                // once the invite goes away.
+                let state = overlay::current_overlay_state();
+                let overlay_free = state.is_none() || is_card_stage(state.as_deref());
+                if !recording && overlay_free {
+                    let _ = app.emit_to("recording_overlay", "meeting-invite", name);
+                    info!("Offering meeting mode for the {name} call");
+                    overlay::show_meeting_invite(&app);
                 }
-                overlay::show_meeting_invite(&app);
-                let app = app.clone();
-                thread::spawn(move || {
-                    thread::sleep(INVITE_TIMEOUT);
-                    app.state::<Arc<MeetingManager>>().dismiss_invite();
-                });
             }
         });
     if let Err(e) = spawned {
@@ -845,17 +1055,23 @@ pub fn spawn_call_watcher(app: AppHandle) {
 }
 
 /// Notification with buttons; `on_action` gets the key of the button clicked.
-/// Runs in the background until the notification closes.
+/// Runs in the background until the notification closes. A `persistent` one
+/// never expires: it waits on screen for a click or for the user to close it
+/// (critical urgency is what GNOME honours; `-t 0` covers the other daemons).
 fn notify_with_actions(
     summary: &str,
     body: &str,
     actions: &[(&str, &str)],
+    persistent: bool,
     on_action: impl FnOnce(String) + Send + 'static,
 ) {
     #[cfg(target_os = "linux")]
     {
         let mut command = std::process::Command::new("notify-send");
         command.args(["--app-name=Handy", "--wait"]);
+        if persistent {
+            command.args(["--urgency=critical", "--expire-time=0"]);
+        }
         for (key, label) in actions {
             command.arg(format!("--action={key}={label}"));
         }
@@ -880,7 +1096,7 @@ fn notify_with_actions(
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (actions, on_action);
+        let _ = (actions, persistent, on_action);
         notify(summary, body);
     }
 }
