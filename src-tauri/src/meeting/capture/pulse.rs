@@ -10,15 +10,13 @@ use libpulse_binding::sample::{Format, Spec};
 use libpulse_binding::stream::Direction;
 use libpulse_simple_binding::Simple;
 
+use super::{AudioSource, READ_SAMPLES};
 use crate::audio_toolkit::constants::WHISPER_SAMPLE_RATE;
 
 /// What the computer is playing (the other meeting participants).
 pub const DEFAULT_MONITOR: &str = "@DEFAULT_MONITOR@";
 /// The user's default microphone.
 pub const DEFAULT_SOURCE: &str = "@DEFAULT_SOURCE@";
-
-/// Samples returned per read: 100 ms keeps the loop cheap and stop responsive.
-pub const READ_SAMPLES: usize = WHISPER_SAMPLE_RATE as usize / 10;
 
 pub struct PulseSource {
     stream: Simple,
@@ -56,9 +54,10 @@ impl PulseSource {
             bytes: vec![0; fragment_bytes as usize],
         })
     }
+}
 
-    /// Block until the next `READ_SAMPLES` samples are captured.
-    pub fn read(&mut self, out: &mut Vec<f32>) -> Result<()> {
+impl AudioSource for PulseSource {
+    fn read(&mut self, out: &mut Vec<f32>) -> Result<()> {
         self.stream
             .read(&mut self.bytes)
             .map_err(|e| anyhow!("Audio capture read failed: {e}"))?;

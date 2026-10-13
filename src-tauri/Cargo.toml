@@ -163,7 +163,8 @@ objc2 = "0.6"
 objc2-foundation = "0.3"
 objc2-app-kit = "0.3"
 objc2-service-management = "0.3.2"
-# Meeting mode call detection: who does audio IO, and window titles.
+# Meeting mode: call detection (who does audio IO, window titles) and
+# system-audio capture (Core Audio process tap).
 objc2-core-audio = "0.3.2"
 objc2-core-foundation = "0.3.2"
 objc2-core-graphics = "0.3.2"

@@ -24,7 +24,6 @@ mod segmenter;
 pub mod summary;
 mod writer;
 
-#[cfg(target_os = "linux")]
 mod capture;
 mod detect;
 
@@ -405,13 +404,12 @@ struct CaptureJob {
 /// Spawn the capture thread for one channel, returning once its audio source
 /// is open (or with the error if it could not be opened). The thread runs
 /// until `stop` is set.
-#[cfg(target_os = "linux")]
 fn start_capture(job: CaptureJob) -> Result<()> {
     use crate::audio_toolkit::vad::{
         frames_for_duration_ms, SileroVad, SmoothedVad, VoiceActivityDetector, VAD_ONSET_MS,
         VAD_PREFILL_MS,
     };
-    use capture::{PulseSource, DEFAULT_MONITOR, DEFAULT_SOURCE};
+    use capture::AudioSource;
     use segmenter::Segmenter;
     use writer::ChunkedWavWriter;
 
@@ -429,13 +427,12 @@ fn start_capture(job: CaptureJob) -> Result<()> {
     thread::Builder::new()
         .name(format!("meeting-capture-{}", channel.wav_prefix()))
         .spawn(move || {
-            let setup = || -> Result<(PulseSource, Segmenter)> {
-                let device = match channel {
-                    Channel::Mic => DEFAULT_SOURCE,
-                    Channel::System => DEFAULT_MONITOR,
+            let setup = || -> Result<(Box<dyn AudioSource>, Segmenter)> {
+                let stream_name = format!("Reunião ({})", channel.wav_prefix());
+                let source = match channel {
+                    Channel::Mic => capture::open_microphone(&stream_name)?,
+                    Channel::System => capture::open_system_audio(&stream_name)?,
                 };
-                let source =
-                    PulseSource::open(device, &format!("Reunião ({})", channel.wav_prefix()))?;
                 let silero = SileroVad::new(&vad_model, SILERO_THRESHOLD)?;
                 let frame = silero.frame_samples();
                 let vad = SmoothedVad::new(
@@ -497,11 +494,6 @@ fn start_capture(job: CaptureJob) -> Result<()> {
         .recv()
         .context("capture thread exited during setup")?
         .with_context(|| format!("starting {:?} capture", channel))
-}
-
-#[cfg(not(target_os = "linux"))]
-fn start_capture(_job: CaptureJob) -> Result<()> {
-    anyhow::bail!("Meeting mode is only available on Linux")
 }
 
 /// The engine transcribing a meeting: the dedicated meeting model, or the
