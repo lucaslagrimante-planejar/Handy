@@ -2,14 +2,13 @@
 
 | Versão | Atualizado em |
 | ------ | ------------- |
-| 2      | 13/10/2026    |
+| 3      | 13/10/2026    |
 
 ## Status
 
-Aceito. Implementação concluída em código e **ainda não testada em máquina Windows/macOS real**:
-
-- captura de áudio: branch `feat/meeting-cross-platform`;
-- detecção de chamada: desenvolvida em paralelo em `feat/meeting-mode`.
+Aceito. Captura de áudio e detecção de chamada implementadas e integradas na branch
+`feat/meeting-cross-platform` (detecção em `src-tauri/src/meeting/detect/{mod,linux,windows,macos}.rs`).
+**Ainda não testado em máquina Windows/macOS real.**
 
 ## Contexto
 
@@ -88,12 +87,12 @@ todos os SOs quando houver fonte de dados.
 
 - Linux mantém exatamente o comportamento atual.
 - Windows e macOS **ainda não foram testados em máquina real**. Verificado até agora:
-  - Linux: `cargo test --lib meeting` com 33/33, incluindo testes do `CpalSource` (downmix,
-    conversão de inteiros, overflow do ring, 48k → blocos de 16k, silêncio no loopback, erro de
-    dispositivo);
+  - Linux: `cargo test --lib meeting` com 36/36 após integrar captura e detecção, incluindo
+    testes do `CpalSource` (downmix, conversão de inteiros, overflow do ring, 48k → blocos de
+    16k, silêncio no loopback, erro de dispositivo);
   - Windows (`x86_64-pc-windows-msvc`) e macOS (`aarch64-apple-darwin`): `cargo clippy` sem
-    avisos no módulo de captura, compilado num crate isolado (o app inteiro não faz
-    cross-compile por causa das dependências nativas).
+    avisos nos módulos de captura e de detecção, cada um compilado num crate isolado (o app
+    inteiro não faz cross-compile por causa das dependências nativas).
 - macOS < 14.2: captura de microfone funciona, mas a de áudio do sistema retorna erro explicativo
   até existir um fallback (ScreenCaptureKit).
 - O app precisa pedir permissões novas no macOS (microfone já existe; captura de áudio do sistema
@@ -110,5 +109,4 @@ todos os SOs quando houver fonte de dados.
       configurações (mesma limitação do Linux).
 - [ ] `notify()`/`notify_with_actions()` fora do Linux só registram em log. Falta notificação
       nativa com as ações do card.
-- [ ] Integrar a detecção de chamada de `feat/meeting-mode` com esta branch (conflitos esperados
-      só em `Cargo.toml` e nas declarações `mod` de `meeting/mod.rs`).
+- [x] Integrar a detecção de chamada de `feat/meeting-mode` com esta branch.
