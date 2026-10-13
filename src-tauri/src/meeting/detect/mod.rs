@@ -1,4 +1,8 @@
 //! Call detection: a meeting is likely in progress when a call app uses audio.
+//! The rules ([`classify`]) are shared; each OS only supplies the data — who
+//! has a live audio stream, and the window titles (see `linux.rs`,
+//! `windows.rs`, `macos.rs`).
+//!
 //! Native call apps count on their own (recording the microphone, or — for the
 //! dedicated softphone/meeting clients — playing call audio while muted);
 //! browsers only when one of their windows looks like a meeting (they use the
@@ -9,9 +13,29 @@
 //! names (Webex: `Webex`, `CiscoCollabHost`, `WebexAudioCapture_<id>`, ...).
 
 use std::collections::HashMap;
-use std::process::Command;
 
-use serde_json::Value;
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+use linux as platform;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+use macos as platform;
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+use windows as platform;
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+mod platform {
+    pub fn audio_users() -> Vec<super::AudioUser> {
+        Vec::new()
+    }
+    pub fn window_titles_by_pid() -> std::collections::HashMap<u32, Vec<String>> {
+        Default::default()
+    }
+}
 
 /// `(fragment, name shown to the user, counts on playback alone)`.
 /// Playback alone only counts for dedicated call clients: chat apps play
@@ -19,6 +43,9 @@ use serde_json::Value;
 const NATIVE_CALL_APPS: &[(&str, &str, bool)] = &[
     ("webex", "Webex", true),
     ("ciscocollabhost", "Webex", true),
+    // Webex Meetings on Windows; the Webex app's macOS bundle id.
+    ("atmgr", "Webex", true),
+    ("cisco-systems.spark", "Webex", true),
     ("zoom", "Zoom", true),
     ("teams", "Teams", true),
     ("skype", "Skype", true),
@@ -40,6 +67,11 @@ const BROWSERS: &[&str] = &[
     "opera",
     "zen",
     "librewolf",
+    // macOS: Edge's helpers, and Safari's audio, which plays from WebKit's
+    // GPU process.
+    "microsoft edge",
+    "safari",
+    "webkit",
 ];
 
 /// Window-title fragments of browser meetings, with the name shown to the user.
@@ -77,7 +109,10 @@ pub enum Direction {
 /// An application with a live audio stream.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AudioUser {
+    /// Executable file name (`chrome.exe`, `zoom.us`, `CiscoCollabHost`).
     pub binary: String,
+    /// What the audio stack calls the app: PulseAudio's `application.name`,
+    /// the Windows session display name, the macOS bundle id.
     pub app_name: String,
     pub pid: Option<u32>,
     pub direction: Direction,
@@ -85,12 +120,11 @@ pub struct AudioUser {
 
 /// Name of the call app in progress, if any.
 pub fn detect_call() -> Option<String> {
-    let mut users = mic_users().unwrap_or_default();
-    users.extend(playback_users().unwrap_or_default());
+    let users = platform::audio_users();
     if users.is_empty() {
         return None;
     }
-    let windows = window_titles_by_pid();
+    let windows = platform::window_titles_by_pid();
     classify(&users, &windows, std::process::id())
 }
 
@@ -134,115 +168,9 @@ pub fn classify(
     None
 }
 
-fn pactl_json(args: &[&str]) -> anyhow::Result<Value> {
-    let output = Command::new("pactl")
-        .args(["-f", "json", "list"])
-        .args(args)
-        .output()?;
-    anyhow::ensure!(output.status.success(), "pactl failed");
-    Ok(serde_json::from_slice(&output.stdout)?)
-}
-
-fn mic_users() -> anyhow::Result<Vec<AudioUser>> {
-    let sources = pactl_json(&["sources"])?;
-    let outputs = pactl_json(&["source-outputs"])?;
-    Ok(parse_mic_users(&sources, &outputs))
-}
-
-fn playback_users() -> anyhow::Result<Vec<AudioUser>> {
-    let inputs = pactl_json(&["sink-inputs"])?;
-    Ok(parse_playback_users(&inputs))
-}
-
-fn audio_user(stream: &Value, direction: Direction) -> Option<AudioUser> {
-    let props = &stream["properties"];
-    let binary = props["application.process.binary"].as_str();
-    let app_name = props["application.name"].as_str();
-    if binary.is_none() && app_name.is_none() {
-        return None;
-    }
-    Some(AudioUser {
-        binary: binary.unwrap_or_default().to_string(),
-        app_name: app_name.unwrap_or_default().to_string(),
-        pid: props["application.process.id"]
-            .as_str()
-            .and_then(|pid| pid.parse().ok()),
-        direction,
-    })
-}
-
-pub fn parse_mic_users(sources: &Value, outputs: &Value) -> Vec<AudioUser> {
-    let monitors: Vec<u64> = sources
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|source| {
-            source["name"]
-                .as_str()
-                .is_some_and(|name| name.ends_with(".monitor"))
-        })
-        .filter_map(|source| source["index"].as_u64())
-        .collect();
-
-    outputs
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|output| {
-            output["source"]
-                .as_u64()
-                .is_some_and(|index| !monitors.contains(&index))
-                && output["corked"].as_bool() != Some(true)
-        })
-        .filter_map(|output| audio_user(output, Direction::Capture))
-        .collect()
-}
-
-pub fn parse_playback_users(inputs: &Value) -> Vec<AudioUser> {
-    inputs
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|input| input["corked"].as_bool() != Some(true))
-        .filter_map(|input| audio_user(input, Direction::Playback))
-        .collect()
-}
-
-/// Window titles grouped by owning pid, via `wmctrl -lp` (X11).
-fn window_titles_by_pid() -> HashMap<u32, Vec<String>> {
-    Command::new("wmctrl")
-        .arg("-lp")
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| parse_wmctrl(&String::from_utf8_lossy(&output.stdout)))
-        .unwrap_or_default()
-}
-
-pub fn parse_wmctrl(listing: &str) -> HashMap<u32, Vec<String>> {
-    let mut windows: HashMap<u32, Vec<String>> = HashMap::new();
-    for line in listing.lines() {
-        // <id> <desktop> <pid> <host> <title...>
-        let mut fields = line.split_whitespace();
-        let (Some(_id), Some(_desktop), Some(pid), Some(host)) =
-            (fields.next(), fields.next(), fields.next(), fields.next())
-        else {
-            continue;
-        };
-        let Ok(pid) = pid.parse() else { continue };
-        let title = line
-            .split_once(host)
-            .map(|(_, rest)| rest.trim())
-            .unwrap_or_default();
-        windows.entry(pid).or_default().push(title.to_string());
-    }
-    windows
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     fn user(binary: &str, pid: u32) -> AudioUser {
         AudioUser {
@@ -262,30 +190,13 @@ mod tests {
         }
     }
 
-    #[test]
-    fn mic_users_skip_monitors_corked_streams() {
-        let sources = json!([
-            {"index": 1, "name": "alsa_input.usb-headset.mono"},
-            {"index": 2, "name": "alsa_output.usb-headset.monitor"}
-        ]);
-        let outputs = json!([
-            {"source": 1, "corked": false, "properties": {"application.process.binary": "webex", "application.process.id": "10"}},
-            {"source": 2, "corked": false, "properties": {"application.process.binary": "obs", "application.process.id": "11"}},
-            {"source": 1, "corked": true, "properties": {"application.process.binary": "chrome", "application.process.id": "12"}}
-        ]);
-        assert_eq!(parse_mic_users(&sources, &outputs), vec![user("webex", 10)]);
-    }
-
-    #[test]
-    fn playback_users_skip_corked_streams() {
-        let inputs = json!([
-            {"corked": false, "properties": {"application.name": "WebexAudioPlayback_1", "application.process.binary": "CiscoCollabHost", "application.process.id": "20"}},
-            {"corked": true, "properties": {"application.name": "Spotify", "application.process.id": "21"}}
-        ]);
-        assert_eq!(
-            parse_playback_users(&inputs),
-            vec![playback("CiscoCollabHost", "WebexAudioPlayback_1", 20)]
-        );
+    /// pid -> window titles.
+    fn windows(entries: &[(u32, &str)]) -> HashMap<u32, Vec<String>> {
+        let mut map: HashMap<u32, Vec<String>> = HashMap::new();
+        for (pid, title) in entries {
+            map.entry(*pid).or_default().push(title.to_string());
+        }
+        map
     }
 
     #[test]
@@ -320,6 +231,31 @@ mod tests {
     }
 
     #[test]
+    fn windows_and_macos_names_are_recognized() {
+        for (binary, app_name, expected) in [
+            ("ms-teams.exe", "", "Teams"),
+            ("Zoom.exe", "", "Zoom"),
+            ("atmgr.exe", "", "Webex"),
+            ("CiscoCollabHost.exe", "", "Webex"),
+            ("Webex", "Cisco-Systems.Spark", "Webex"),
+            ("zoom.us", "us.zoom.xos", "Zoom"),
+            ("MSTeams", "com.microsoft.teams2", "Teams"),
+        ] {
+            let found = classify(
+                &[AudioUser {
+                    binary: binary.into(),
+                    app_name: app_name.into(),
+                    pid: Some(10),
+                    direction: Direction::Capture,
+                }],
+                &HashMap::new(),
+                1,
+            );
+            assert_eq!(found.as_deref(), Some(expected), "{binary}");
+        }
+    }
+
+    #[test]
     fn muted_call_is_seen_through_playback() {
         // Muted in the call: no capture stream, call audio still plays.
         let users = [playback("CiscoCollabHost", "WebexAudioPlayback_1", 20)];
@@ -341,23 +277,38 @@ mod tests {
 
     #[test]
     fn browsers_need_a_meeting_window() {
-        let windows = parse_wmctrl(
-            "0x01  0 500   chorao Meet - abc-defg-hij - Google Chrome\n\
-             0x02  0 600   chorao Claude Code - Visual Studio Code\n",
-        );
+        let meeting = windows(&[
+            (500, "Meet - abc-defg-hij - Google Chrome"),
+            (600, "Claude Code - Visual Studio Code"),
+        ]);
         assert_eq!(
-            classify(&[user("chrome", 777)], &windows, 1).as_deref(),
+            classify(&[user("chrome", 777)], &meeting, 1).as_deref(),
             Some("Google Meet")
         );
-        let no_meeting = parse_wmctrl("0x02  0 600   chorao YouTube - Google Chrome\n");
+        assert_eq!(
+            classify(&[user("chrome.exe", 777)], &meeting, 1).as_deref(),
+            Some("Google Meet")
+        );
+        let no_meeting = windows(&[(600, "YouTube - Google Chrome")]);
         assert_eq!(classify(&[user("chrome", 777)], &no_meeting, 1), None);
     }
 
     #[test]
+    fn safari_meetings_need_a_meeting_window() {
+        let meeting = windows(&[(500, "Meet - abc-defg-hij")]);
+        let webkit = user("com.apple.WebKit.GPU", 777);
+        assert_eq!(
+            classify(std::slice::from_ref(&webkit), &meeting, 1).as_deref(),
+            Some("Google Meet")
+        );
+        assert_eq!(classify(&[webkit], &HashMap::new(), 1), None);
+    }
+
+    #[test]
     fn browser_playback_alone_is_not_a_call() {
-        let windows = parse_wmctrl("0x01  0 500   chorao Meet - abc-defg-hij - Google Chrome\n");
+        let meeting = windows(&[(500, "Meet - abc-defg-hij - Google Chrome")]);
         let users = [playback("chrome", "Google Chrome", 777)];
-        assert_eq!(classify(&users, &windows, 1), None);
+        assert_eq!(classify(&users, &meeting, 1), None);
     }
 
     #[test]

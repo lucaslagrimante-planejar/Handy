@@ -26,7 +26,6 @@ mod writer;
 
 #[cfg(target_os = "linux")]
 mod capture;
-#[cfg(target_os = "linux")]
 mod detect;
 
 use std::collections::HashSet;
@@ -964,11 +963,9 @@ fn notify(summary: &str, body: &str) {
 }
 
 /// How often to look for a call in progress.
-#[cfg(target_os = "linux")]
 const CALL_POLL: Duration = Duration::from_secs(4);
 /// Polls in a row without a call before it counts as ended. Answering,
 /// holding or switching devices drops the call's streams for a moment.
-#[cfg(target_os = "linux")]
 const CALL_END_MISSES: u32 = 3;
 
 /// Watch for calls and offer to transcribe each one. The invite stays up for
@@ -976,7 +973,6 @@ const CALL_END_MISSES: u32 = 3;
 /// or starts the meeting; if dictation takes the overlay meanwhile, the
 /// invite comes back afterwards. It goes away on its own only when the call
 /// ends.
-#[cfg(target_os = "linux")]
 pub fn spawn_call_watcher(app: AppHandle) {
     use tauri::Emitter;
 

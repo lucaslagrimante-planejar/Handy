@@ -218,7 +218,6 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(history_manager.clone());
     app_handle.manage(tray::TrayState::new());
     app_handle.manage(Arc::new(meeting::MeetingManager::new(app_handle.clone())));
-    #[cfg(target_os = "linux")]
     meeting::spawn_call_watcher(app_handle.clone());
 
     // Note: Shortcuts are NOT initialized here.
