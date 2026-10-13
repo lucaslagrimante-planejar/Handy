@@ -24,6 +24,7 @@ import {
 import { formatDateTime } from "@/utils/dateFormat";
 import { Button } from "../../ui/Button";
 import { copyToClipboard } from "./clipboard";
+import { CollapsibleSection } from "./CollapsibleSection";
 
 const MEETINGS_CHANGED = "meetings-changed";
 
@@ -128,11 +129,11 @@ export const MeetingHistory: React.FC = () => {
   if (meetings.length === 0) return null;
 
   return (
-    <div className="space-y-2">
-      <div className="px-4 flex items-center justify-between">
-        <h2 className="text-xs font-medium text-mid-gray uppercase tracking-wide">
-          {t("settings.history.meetings.title")}
-        </h2>
+    <CollapsibleSection
+      id="meetings"
+      title={t("settings.history.meetings.title")}
+      count={meetings.length}
+      actions={
         <Button
           onClick={() => commands.openMeetingsFolder()}
           variant="secondary"
@@ -142,7 +143,8 @@ export const MeetingHistory: React.FC = () => {
           <FolderOpen className="w-4 h-4" />
           <span>{t("settings.history.meetings.openFolder")}</span>
         </Button>
-      </div>
+      }
+    >
       <div className="bg-background border border-mid-gray/20 rounded-lg divide-y divide-mid-gray/20">
         {meetings.map((meeting) => (
           <MeetingEntry
@@ -153,7 +155,7 @@ export const MeetingHistory: React.FC = () => {
           />
         ))}
       </div>
-    </div>
+    </CollapsibleSection>
   );
 };
 

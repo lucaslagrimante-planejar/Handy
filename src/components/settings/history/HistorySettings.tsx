@@ -15,6 +15,7 @@ import { formatDateTime } from "@/utils/dateFormat";
 import { AudioPlayer, AudioPlayerGroup } from "../../ui/AudioPlayer";
 import { Button } from "../../ui/Button";
 import { copyToClipboard } from "./clipboard";
+import { CollapsibleSection } from "./CollapsibleSection";
 import { MeetingHistory } from "./MeetingHistory";
 
 const IconButton: React.FC<{
@@ -269,22 +270,20 @@ export const HistorySettings: React.FC = () => {
   return (
     <div className="max-w-3xl w-full mx-auto space-y-6">
       <MeetingHistory />
-      <div className="space-y-2">
-        <div className="px-4 flex items-center justify-between">
-          <div>
-            <h2 className="text-xs font-medium text-mid-gray uppercase tracking-wide">
-              {t("settings.history.title")}
-            </h2>
-          </div>
+      <CollapsibleSection
+        id="recordings"
+        title={t("settings.history.title")}
+        actions={
           <OpenRecordingsButton
             onClick={openRecordingsFolder}
             label={t("settings.history.openFolder")}
           />
-        </div>
+        }
+      >
         <div className="bg-background border border-mid-gray/20 rounded-lg overflow-visible">
           {content}
         </div>
-      </div>
+      </CollapsibleSection>
     </div>
   );
 };
