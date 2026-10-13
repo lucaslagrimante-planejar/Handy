@@ -33,5 +33,5 @@ do ADR 0001); ao criar CI de build, não reaproveite os workflows assinados do u
 `libtranscribe.so.0.3` em `target/lib/Handy` (RUNPATH `$ORIGIN/../lib/Handy`), que não existe na
 worktree. Extraia o `.deb` (`dpkg-deb -x`) para um diretório próprio, por exemplo
 `~/.local/opt/handy-dev`, e aponte `~/.local/bin/handy` para `usr/bin/handy` dele. Antes, copie
-`history.db` e `settings_store.json` de `~/.local/share/com.pais.handy`. Os dados das reuniões ficam
-no mesmo lugar e não precisam de backup.
+`history.db` e `settings_store.json` de `~/.local/share/com.pais.handy`. As reuniões e gravações ficam
+no mesmo lugar; o build novo só lê esses diretórios.
