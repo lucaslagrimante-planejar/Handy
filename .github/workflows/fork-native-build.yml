@@ -1,0 +1,44 @@
+name: "Fork Native Build"
+
+# Unsigned native builds for the fork (no Apple/Azure certificates, no updater
+# signing key). Manual trigger only: nothing runs on push.
+# Updater artifacts are disabled because tauri.conf.json still carries the
+# upstream updater pubkey (see docs/adr/0001-comercializacao-do-fork-handy.md).
+
+on:
+  workflow_dispatch:
+
+jobs:
+  native-build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "macos-26" # Apple Silicon. macOS 26 SDK for Apple Intelligence.
+            args: "--target aarch64-apple-darwin --config src-tauri/tauri.unsigned.conf.json"
+            target: "aarch64-apple-darwin"
+          - platform: "macos-latest" # Intel Macs.
+            args: "--target x86_64-apple-darwin --config src-tauri/tauri.unsigned.conf.json"
+            target: "x86_64-apple-darwin"
+          - platform: "ubuntu-22.04"
+            args: "--bundles deb --config src-tauri/tauri.unsigned.conf.json"
+            target: "x86_64-unknown-linux-gnu"
+          - platform: "ubuntu-24.04"
+            args: "--bundles appimage,rpm --config src-tauri/tauri.unsigned.conf.json"
+            target: "x86_64-unknown-linux-gnu"
+          - platform: "windows-latest"
+            args: "--config src-tauri/tauri.unsigned.conf.json"
+            target: "x86_64-pc-windows-msvc"
+
+    uses: ./.github/workflows/build.yml
+    with:
+      platform: ${{ matrix.platform }}
+      target: ${{ matrix.target }}
+      build-args: ${{ matrix.args }}
+      sign-binaries: false
+      asset-prefix: "handy-fork"
+      upload-artifacts: true
+      is-debug-build: false
+    secrets: inherit
