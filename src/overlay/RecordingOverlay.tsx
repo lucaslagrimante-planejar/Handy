@@ -40,6 +40,8 @@ interface MeetingCard {
 // Number of reactive bars in the waveform (the simple, smoothed style shared by
 // every overlay form). Mic levels arrive as 16 FFT buckets; we take the first N.
 const WAVE_BARS = 9;
+// Slack (CSS px) around the card where the overlay still takes clicks.
+const HIT_REGION_PAD = 6;
 
 // Only call out a model load in the Live preview once it has run this long.
 // Warm loads finish in well under this (~0.2s on Apple Silicon, ~1.5s on a
@@ -281,6 +283,52 @@ const RecordingOverlay: React.FC = () => {
     pinnedRef.current = true;
     setOverflowing(false);
   }, [session]);
+
+  // The overlay window is a transparent rectangle bigger than the card, so tell
+  // the backend to take clicks only over the card; the rest of the window lets
+  // them through to whatever is below. While hidden, nothing takes clicks.
+  useEffect(() => {
+    let last = "";
+    const send = (x: number, y: number, width: number, height: number) => {
+      const key = `${x},${y},${width},${height}`;
+      if (key === last) return;
+      last = key;
+      commands.setOverlayHitRegion(x, y, width, height).catch(() => {});
+    };
+    if (!isVisible) {
+      send(0, 0, 0, 0);
+      return;
+    }
+
+    let frame = 0;
+    const report = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const cardEl = document.querySelector(".scard");
+        if (!cardEl) return send(0, 0, 0, 0);
+        // A little slack for the pop-in scale and the button hover outlines.
+        const r = cardEl.getBoundingClientRect();
+        const pad = HIT_REGION_PAD;
+        send(r.left - pad, r.top - pad, r.width + pad * 2, r.height + pad * 2);
+      });
+    };
+
+    const observer = new ResizeObserver(report);
+    const cardEl = document.querySelector(".scard");
+    if (cardEl) observer.observe(cardEl);
+    // Transforms and pop-ins don't resize the box, so re-measure after them.
+    document.addEventListener("transitionend", report);
+    document.addEventListener("animationend", report);
+    window.addEventListener("resize", report);
+    report();
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      document.removeEventListener("transitionend", report);
+      document.removeEventListener("animationend", report);
+      window.removeEventListener("resize", report);
+    };
+  }, [isVisible, state, session, position]);
 
   if (!isVisible) return null;
 

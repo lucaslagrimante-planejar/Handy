@@ -734,6 +734,7 @@ pub fn run(cli_args: CliArgs) {
             secure_input::run_keyboard_diagnostic,
             trigger_update_check,
             show_main_window_command,
+            overlay::set_overlay_hit_region,
             commands::cancel_operation,
             commands::meeting::start_meeting,
             commands::meeting::convert_to_meeting,

@@ -535,6 +535,16 @@ async showMainWindowCommand() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Limits where the overlay window takes clicks to the visible card, given in
+ * the webview's CSS pixels. The window is a transparent rectangle larger than
+ * the card (and kept sized for the biggest state), so without this its empty
+ * corners swallow clicks meant for the windows below. An empty rectangle lets
+ * every click through, which the overlay sends while it is hidden.
+ */
+async setOverlayHitRegion(x: number, y: number, width: number, height: number) : Promise<void> {
+    await TAURI_INVOKE("set_overlay_hit_region", { x, y, width, height });
+},
 async cancelOperation() : Promise<void> {
     await TAURI_INVOKE("cancel_operation");
 },

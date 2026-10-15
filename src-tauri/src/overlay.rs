@@ -617,6 +617,51 @@ fn show_overlay_state_on_main(app_handle: &AppHandle, state: &str) {
     }
 }
 
+/// Limits where the overlay window takes clicks to the visible card, given in
+/// the webview's CSS pixels. The window is a transparent rectangle larger than
+/// the card (and kept sized for the biggest state), so without this its empty
+/// corners swallow clicks meant for the windows below. An empty rectangle lets
+/// every click through, which the overlay sends while it is hidden.
+#[tauri::command]
+#[specta::specta]
+pub fn set_overlay_hit_region(app: AppHandle, x: f64, y: f64, width: f64, height: f64) {
+    #[cfg(target_os = "linux")]
+    {
+        // GTK widgets are only safe to touch from the main thread.
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let Some(overlay_window) = handle.get_webview_window("recording_overlay") else {
+                return;
+            };
+            match overlay_window.gtk_window() {
+                Ok(gtk_window) => {
+                    use gtk::cairo::{RectangleInt, Region};
+                    use gtk::prelude::WidgetExt;
+
+                    let region = if width > 0.0 && height > 0.0 {
+                        let left = x.floor() as i32;
+                        let top = y.floor() as i32;
+                        Region::create_rectangle(&RectangleInt::new(
+                            left,
+                            top,
+                            (x + width).ceil() as i32 - left,
+                            (y + height).ceil() as i32 - top,
+                        ))
+                    } else {
+                        Region::create()
+                    };
+                    gtk_window.input_shape_combine_region(Some(&region));
+                }
+                Err(error) => log::error!("Failed to access GTK overlay window: {error}"),
+            }
+        });
+    }
+
+    // Windows and macOS keep the whole window clickable for now.
+    #[cfg(not(target_os = "linux"))]
+    let _ = (app, x, y, width, height);
+}
+
 /// Notify the visible recording overlay that the input stream has delivered its
 /// first sample chunk. Audio feedback uses the same backend readiness signal,
 /// but this targeted event is skipped when overlays are disabled.
