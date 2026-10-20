@@ -959,6 +959,10 @@ const CALL_POLL: Duration = Duration::from_secs(4);
 /// Polls in a row without a call before it counts as ended. Answering,
 /// holding or switching devices drops the call's streams for a moment.
 const CALL_END_MISSES: u32 = 3;
+/// Polls in a row a call app must keep playing audio, with no microphone,
+/// before it counts as a (muted) call: a chat notification sound plays for a
+/// moment only.
+const CALL_PLAYBACK_POLLS: u32 = 5;
 
 /// Watch for calls and offer to transcribe each one. The invite stays up for
 /// the whole call — ringing, answered, on hold — until the user dismisses it
@@ -974,6 +978,8 @@ pub fn spawn_call_watcher(app: AppHandle) {
             // App of the call in progress, kept through short detection gaps.
             let mut call: Option<String> = None;
             let mut misses = 0;
+            // Polls in a row a call app was only heard, never recording.
+            let mut playback_polls = 0;
             // A meeting ran during this call: do not offer it again.
             let mut handled = false;
             let mut announced = false;
@@ -989,9 +995,16 @@ pub fn spawn_call_watcher(app: AppHandle) {
                     Some(found) => {
                         misses = 0;
                         if call.is_none() {
-                            info!("Call detected ({found})");
+                            if found.playback_only {
+                                playback_polls += 1;
+                                if playback_polls < CALL_PLAYBACK_POLLS {
+                                    continue;
+                                }
+                            }
+                            info!("Call detected ({})", found.app);
                         }
-                        call = Some(found);
+                        playback_polls = 0;
+                        call = Some(found.app);
                     }
                     None if call.is_some() => {
                         misses += 1;
@@ -1008,7 +1021,10 @@ pub fn spawn_call_watcher(app: AppHandle) {
                         }
                         continue;
                     }
-                    None => continue,
+                    None => {
+                        playback_polls = 0;
+                        continue;
+                    }
                 }
 
                 let Some(name) = call.as_deref() else {

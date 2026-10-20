@@ -118,8 +118,18 @@ pub struct AudioUser {
     pub direction: Direction,
 }
 
-/// Name of the call app in progress, if any.
-pub fn detect_call() -> Option<String> {
+/// A call app seen using audio.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Detection {
+    /// Name shown to the user.
+    pub app: String,
+    /// Only seen playing audio: a muted call — or just a chat notification
+    /// sound, so the caller has to see it last before trusting it.
+    pub playback_only: bool,
+}
+
+/// The call app in progress, if any.
+pub fn detect_call() -> Option<Detection> {
     let users = platform::audio_users();
     if users.is_empty() {
         return None;
@@ -128,11 +138,13 @@ pub fn detect_call() -> Option<String> {
     classify(&users, &windows, std::process::id())
 }
 
+/// Microphone use wins over playback alone, whatever the stream order.
 pub fn classify(
     users: &[AudioUser],
     windows: &HashMap<u32, Vec<String>>,
     own_pid: u32,
-) -> Option<String> {
+) -> Option<Detection> {
+    let mut playback_only = None;
     for user in users {
         if user.pid == Some(own_pid) {
             continue;
@@ -145,8 +157,17 @@ pub fn classify(
             .iter()
             .find(|(fragment, _, _)| matches(fragment))
         {
-            if user.direction == Direction::Capture || *playback_counts {
-                return Some(name.to_string());
+            if user.direction == Direction::Capture {
+                return Some(Detection {
+                    app: name.to_string(),
+                    playback_only: false,
+                });
+            }
+            if *playback_counts && playback_only.is_none() {
+                playback_only = Some(Detection {
+                    app: name.to_string(),
+                    playback_only: true,
+                });
             }
             continue;
         }
@@ -160,17 +181,29 @@ pub fn classify(
                     .find(|(fragment, _)| title.contains(fragment))
                     .map(|(_, name)| name.to_string())
             });
-            if meeting.is_some() {
-                return meeting;
+            if let Some(app) = meeting {
+                return Some(Detection {
+                    app,
+                    playback_only: false,
+                });
             }
         }
     }
-    None
+    playback_only
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// App name found by [`classify`].
+    fn classify_app(
+        users: &[AudioUser],
+        windows: &HashMap<u32, Vec<String>>,
+        own_pid: u32,
+    ) -> Option<String> {
+        classify(users, windows, own_pid).map(|found| found.app)
+    }
 
     fn user(binary: &str, pid: u32) -> AudioUser {
         AudioUser {
@@ -201,7 +234,7 @@ mod tests {
 
     #[test]
     fn native_call_apps_count_on_mic_use_alone() {
-        let found = classify(&[user("webex", 10)], &HashMap::new(), 1);
+        let found = classify_app(&[user("webex", 10)], &HashMap::new(), 1);
         assert_eq!(found.as_deref(), Some("Webex"));
     }
 
@@ -215,7 +248,7 @@ mod tests {
             "webex.bin",
             "CiscoCollabHostCef",
         ] {
-            let found = classify(&[user(binary, 10)], &HashMap::new(), 1);
+            let found = classify_app(&[user(binary, 10)], &HashMap::new(), 1);
             assert_eq!(found.as_deref(), Some("Webex"), "{binary}");
         }
         let by_name = AudioUser {
@@ -225,7 +258,7 @@ mod tests {
             direction: Direction::Capture,
         };
         assert_eq!(
-            classify(&[by_name], &HashMap::new(), 1).as_deref(),
+            classify_app(&[by_name], &HashMap::new(), 1).as_deref(),
             Some("Webex")
         );
     }
@@ -241,7 +274,7 @@ mod tests {
             ("zoom.us", "us.zoom.xos", "Zoom"),
             ("MSTeams", "com.microsoft.teams2", "Teams"),
         ] {
-            let found = classify(
+            let found = classify_app(
                 &[AudioUser {
                     binary: binary.into(),
                     app_name: app_name.into(),
@@ -260,17 +293,41 @@ mod tests {
         // Muted in the call: no capture stream, call audio still plays.
         let users = [playback("CiscoCollabHost", "WebexAudioPlayback_1", 20)];
         assert_eq!(
-            classify(&users, &HashMap::new(), 1).as_deref(),
+            classify_app(&users, &HashMap::new(), 1).as_deref(),
             Some("Webex")
+        );
+    }
+
+    #[test]
+    fn playback_alone_is_flagged_and_loses_to_the_mic() {
+        let ringing = [playback("CiscoCollabHost", "WebexAudioPlayback_1", 20)];
+        assert_eq!(
+            classify(&ringing, &HashMap::new(), 1),
+            Some(Detection {
+                app: "Webex".into(),
+                playback_only: true,
+            })
+        );
+        // Webex playing a notification while Zoom records: Zoom is the call.
+        let both = [
+            playback("CiscoCollabHost", "WebexAudioPlayback_1", 20),
+            user("zoom", 21),
+        ];
+        assert_eq!(
+            classify(&both, &HashMap::new(), 1),
+            Some(Detection {
+                app: "Zoom".into(),
+                playback_only: false,
+            })
         );
     }
 
     #[test]
     fn chat_apps_need_the_mic() {
         let users = [playback("discord", "Discord", 30)];
-        assert_eq!(classify(&users, &HashMap::new(), 1), None);
+        assert_eq!(classify_app(&users, &HashMap::new(), 1), None);
         assert_eq!(
-            classify(&[user("discord", 30)], &HashMap::new(), 1).as_deref(),
+            classify_app(&[user("discord", 30)], &HashMap::new(), 1).as_deref(),
             Some("Discord")
         );
     }
@@ -282,15 +339,15 @@ mod tests {
             (600, "Claude Code - Visual Studio Code"),
         ]);
         assert_eq!(
-            classify(&[user("chrome", 777)], &meeting, 1).as_deref(),
+            classify_app(&[user("chrome", 777)], &meeting, 1).as_deref(),
             Some("Google Meet")
         );
         assert_eq!(
-            classify(&[user("chrome.exe", 777)], &meeting, 1).as_deref(),
+            classify_app(&[user("chrome.exe", 777)], &meeting, 1).as_deref(),
             Some("Google Meet")
         );
         let no_meeting = windows(&[(600, "YouTube - Google Chrome")]);
-        assert_eq!(classify(&[user("chrome", 777)], &no_meeting, 1), None);
+        assert_eq!(classify_app(&[user("chrome", 777)], &no_meeting, 1), None);
     }
 
     #[test]
@@ -298,21 +355,24 @@ mod tests {
         let meeting = windows(&[(500, "Meet - abc-defg-hij")]);
         let webkit = user("com.apple.WebKit.GPU", 777);
         assert_eq!(
-            classify(std::slice::from_ref(&webkit), &meeting, 1).as_deref(),
+            classify_app(std::slice::from_ref(&webkit), &meeting, 1).as_deref(),
             Some("Google Meet")
         );
-        assert_eq!(classify(&[webkit], &HashMap::new(), 1), None);
+        assert_eq!(classify_app(&[webkit], &HashMap::new(), 1), None);
     }
 
     #[test]
     fn browser_playback_alone_is_not_a_call() {
         let meeting = windows(&[(500, "Meet - abc-defg-hij - Google Chrome")]);
         let users = [playback("chrome", "Google Chrome", 777)];
-        assert_eq!(classify(&users, &meeting, 1), None);
+        assert_eq!(classify_app(&users, &meeting, 1), None);
     }
 
     #[test]
     fn own_process_is_ignored() {
-        assert_eq!(classify(&[user("webex", 42)], &HashMap::new(), 42), None);
+        assert_eq!(
+            classify_app(&[user("webex", 42)], &HashMap::new(), 42),
+            None
+        );
     }
 }
