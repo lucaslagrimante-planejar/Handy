@@ -746,14 +746,16 @@ const RecordingOverlay: React.FC = () => {
                 onClick={() => commands.summarizeMeeting(card.name)}
               >
                 {sparkIcon}
-                {t("overlay.meeting.summarize")}
+                <span>{t("overlay.meeting.summarize")}</span>
               </button>
             ) : (
               <button className="sbtn" onClick={copySummary}>
                 {copied ? checkIcon : copyIcon}
-                {copied
-                  ? t("overlay.meeting.copied")
-                  : t("overlay.meeting.copySummary")}
+                <span>
+                  {copied
+                    ? t("overlay.meeting.copied")
+                    : t("overlay.meeting.copySummary")}
+                </span>
               </button>
             )}
             <button
@@ -761,13 +763,7 @@ const RecordingOverlay: React.FC = () => {
               onClick={() => commands.openMeetingFolder(card.name)}
             >
               {folderIcon}
-              {t("overlay.meeting.openFolder")}
-            </button>
-            <button
-              className="sbtn plain"
-              onClick={() => commands.dismissMeetingInvite()}
-            >
-              {done ? t("overlay.meeting.later") : t("overlay.meeting.dismiss")}
+              <span>{t("overlay.meeting.openFolder")}</span>
             </button>
           </div>
         </div>

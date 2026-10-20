@@ -617,16 +617,27 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   padding-left: 36px; /* under the title, past the badge */
 }
+/* Long translations shrink the buttons (label ellipsis) instead of pushing
+   them past the card. */
 .sresult-actions .sbtn {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.sresult-actions .sbtn span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .sresult-actions .sbtn svg {
   width: 11px;
   height: 11px;
+  flex: none;
 }
 .sbtn.ghost {
   background: var(--s-hair);
@@ -635,16 +646,6 @@
 }
 .sbtn.ghost:hover {
   background: var(--s-accent-soft);
-}
-.sbtn.plain {
-  background: transparent;
-  color: var(--s-muted);
-  font-weight: 500;
-  margin-left: auto;
-  padding: 0 6px;
-}
-.sbtn.plain:hover {
-  color: var(--color-text);
 }
 
 /* Stop options of the running meeting: three full-width choices under the
