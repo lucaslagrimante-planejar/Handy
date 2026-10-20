@@ -24,6 +24,8 @@ use crate::audio_toolkit::get_cpal_host;
 /// Seconds of audio the ring holds while the capture thread is busy.
 const RING_SECONDS: usize = 5;
 const BLOCK: Duration = Duration::from_millis(100);
+/// `BLOCK` in frames at the Whisper rate.
+const BLOCK_FRAMES: usize = WHISPER_SAMPLE_RATE as usize / 10;
 /// A loopback stream delivers nothing while nothing is playing. Past this
 /// long without audio the gap is filled with silence, so the system channel
 /// keeps the same timeline as the microphone and `read` keeps returning
@@ -69,7 +71,7 @@ impl CpalSource {
         Ok(get_cpal_host()
             .input_devices()
             .context("Listing audio input devices")?
-            .find(|device| device.name().is_ok_and(|n| n == name)))
+            .find(|device| device.description().is_ok_and(|d| d.name() == name)))
     }
 
     /// Record from `device`, keeping `keep_alive` (e.g. the virtual device it
@@ -86,7 +88,7 @@ impl CpalSource {
         config: cpal::SupportedStreamConfig,
         keep_alive: Option<Box<dyn Any>>,
     ) -> Result<Self> {
-        let rate = config.sample_rate().0 as usize;
+        let rate = config.sample_rate() as usize;
         let channels = (config.channels() as usize).max(1);
         let (producer, consumer) = RingBuffer::new(rate * RING_SECONDS);
         let failed = Arc::new(AtomicBool::new(false));
@@ -105,7 +107,7 @@ impl CpalSource {
 
         Ok(Self {
             _stream: stream,
-            blocks: Blocks::new(consumer, failed, rate, STARVED_AFTER),
+            blocks: Blocks::new(consumer, failed, rate, STARVED_AFTER)?,
             _keep_alive: keep_alive,
         })
     }
@@ -131,7 +133,7 @@ where
     let failed = Arc::clone(failed);
     device
         .build_input_stream(
-            &config.config(),
+            config.config(),
             move |data: &[T], _: &cpal::InputCallbackInfo| push_mono(data, channels, &mut producer),
             // Runs on the audio thread: just flag it, `read` reports it.
             move |_err| failed.store(true, Ordering::Release),
@@ -175,15 +177,16 @@ impl Blocks {
         failed: Arc<AtomicBool>,
         rate: usize,
         starved_after: Duration,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        Ok(Self {
             samples,
             failed,
-            resampler: FrameResampler::new(rate, WHISPER_SAMPLE_RATE as usize, BLOCK),
+            resampler: FrameResampler::new(rate, WHISPER_SAMPLE_RATE as usize, BLOCK_FRAMES, 1)
+                .context("Starting the resampler")?,
             ready: VecDeque::new(),
             idle_since: Instant::now(),
             starved_after,
-        }
+        })
     }
 
     fn next(&mut self, out: &mut Vec<f32>) -> Result<()> {
@@ -205,8 +208,10 @@ impl Blocks {
                     .expect("the consumer just reported this many readable slots");
                 let (first, second) = chunk.as_slices();
                 let ready = &mut self.ready;
-                self.resampler.push(first, |b| ready.push_back(b.to_vec()));
-                self.resampler.push(second, |b| ready.push_back(b.to_vec()));
+                self.resampler
+                    .push(first, |b, _| ready.push_back(b.to_vec()))?;
+                self.resampler
+                    .push(second, |b, _| ready.push_back(b.to_vec()))?;
                 chunk.commit_all();
                 self.idle_since = Instant::now();
                 continue;
@@ -233,7 +238,10 @@ mod tests {
     fn blocks(rate: usize, starved_after: Duration) -> (Producer<f32>, Blocks) {
         let (producer, consumer) = RingBuffer::new(rate * RING_SECONDS);
         let failed = Arc::new(AtomicBool::new(false));
-        (producer, Blocks::new(consumer, failed, rate, starved_after))
+        (
+            producer,
+            Blocks::new(consumer, failed, rate, starved_after).unwrap(),
+        )
     }
 
     #[test]

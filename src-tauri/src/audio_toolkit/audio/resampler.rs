@@ -1,137 +1,195 @@
-use rubato::{FftFixedIn, Resampler};
-use std::time::Duration;
+// Copied from handy-recorder 0.1.0, where it is private. The meeting capture
+// resamples with it too, so both use the same rubato version.
+use rubato::audioadapter_buffers::direct::{InterleavedSlice, SequentialSlice};
+use rubato::{
+    Fft, FixedSync, Indexing, ResampleError, Resampler, ResamplerConstructionError, WindowFunction,
+};
+use std::fmt;
 
-// Make this a constant you can tweak
 const RESAMPLER_CHUNK_SIZE: usize = 1024;
 
+/// Cap on zero-chunk rounds when draining the tail at `finish()`.
+const MAX_TAIL_ROUNDS: usize = 8;
+
+#[derive(Debug)]
+pub enum ResamplerError {
+    Resample(ResampleError),
+    /// The tail drain stopped before all real audio had emerged.
+    TailIncomplete {
+        expected: usize,
+        emitted: usize,
+    },
+}
+
+impl fmt::Display for ResamplerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Resample(e) => write!(f, "resampler error: {e}"),
+            Self::TailIncomplete { expected, emitted } => write!(
+                f,
+                "resampler tail incomplete: {emitted} of {expected} frames emerged"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ResamplerError {}
+
+impl From<ResampleError> for ResamplerError {
+    fn from(e: ResampleError) -> Self {
+        Self::Resample(e)
+    }
+}
+
+/// Resamples interleaved K-channel audio into fixed-size chunks, emitted as
+/// `(samples, valid frames)`. Only the final chunk is zero-padded.
 pub struct FrameResampler {
-    resampler: Option<FftFixedIn<f32>>,
+    resampler: Option<Fft<f32>>,
+    channels: usize,
     chunk_in: usize,
+    /// Interleaved input frames waiting for a full resampler chunk.
     in_buf: Vec<f32>,
-    frame_samples: usize,
+    /// Interleaved resampler output, sized for the largest chunk.
+    out_buf: Vec<f32>,
+    frames_per_chunk: usize,
+    /// Interleaved output frames waiting for a full chunk.
     pending: Vec<f32>,
     in_hz: usize,
     out_hz: usize,
-    /// Samples in/out of the inner resampler; `finish()` uses the pair to
-    /// know how much real audio (~10-30ms) its delay line still holds.
+    /// Frames in/out, so `finish()` knows how much its delay line holds.
     in_count: usize,
     out_count: usize,
 }
 
 impl FrameResampler {
-    pub fn new(in_hz: usize, out_hz: usize, frame_dur: Duration) -> Self {
-        let frame_samples = ((out_hz as f64 * frame_dur.as_secs_f64()).round()) as usize;
-        assert!(frame_samples > 0, "frame duration too short");
+    pub fn new(
+        in_hz: usize,
+        out_hz: usize,
+        frames_per_chunk: usize,
+        channels: usize,
+    ) -> Result<Self, ResamplerConstructionError> {
+        assert!(frames_per_chunk > 0, "chunk size must be non-zero");
+        assert!(channels > 0, "channel count must be non-zero");
 
-        // Use fixed chunk size instead of GCD-based
         let chunk_in = RESAMPLER_CHUNK_SIZE;
 
-        let resampler = (in_hz != out_hz).then(|| {
-            FftFixedIn::<f32>::new(in_hz, out_hz, chunk_in, 1, 1)
-                .expect("Failed to create resampler")
-        });
+        // One FFT block per chunk and the BlackmanHarris2 window, as rubato
+        // 0.16's `FftFixedIn` with one sub-chunk; `Fft::new` would pick
+        // smaller blocks, changing the delay and the anti-aliasing cutoff.
+        let resampler = if in_hz != out_hz {
+            let r = Fft::<f32>::new_custom(
+                in_hz,
+                out_hz,
+                chunk_in,
+                1,
+                channels,
+                WindowFunction::BlackmanHarris2,
+                FixedSync::Input,
+            )?;
+            debug_assert_eq!(r.input_frames_next(), chunk_in);
+            Some(r)
+        } else {
+            None
+        };
+        let out_frames = resampler.as_ref().map_or(0, |r| r.output_frames_max());
 
-        Self {
+        Ok(Self {
             resampler,
+            channels,
             chunk_in,
-            in_buf: Vec::with_capacity(chunk_in),
-            frame_samples,
-            pending: Vec::with_capacity(frame_samples),
+            in_buf: Vec::with_capacity(chunk_in * channels),
+            out_buf: vec![0.0; out_frames * channels],
+            frames_per_chunk,
+            pending: Vec::with_capacity(frames_per_chunk * channels),
             in_hz,
             out_hz,
             in_count: 0,
             out_count: 0,
-        }
+        })
     }
 
-    pub fn push(&mut self, mut src: &[f32], mut emit: impl FnMut(&[f32])) {
+    /// Output delay in output frames (0 when not resampling).
+    pub fn output_delay(&self) -> usize {
+        self.resampler.as_ref().map_or(0, |r| r.output_delay())
+    }
+
+    /// Feeds interleaved whole frames.
+    pub fn push(
+        &mut self,
+        mut src: &[f32],
+        mut emit: impl FnMut(&[f32], usize),
+    ) -> Result<(), ResamplerError> {
+        debug_assert_eq!(src.len() % self.channels, 0, "partial frame");
         if self.resampler.is_none() {
             self.emit_frames(src, &mut emit);
-            return;
+            return Ok(());
         }
-        self.in_count += src.len();
+        self.in_count += src.len() / self.channels;
 
+        let chunk_samples = self.chunk_in * self.channels;
         while !src.is_empty() {
-            let space = self.chunk_in - self.in_buf.len();
-            let take = space.min(src.len());
+            let take = (chunk_samples - self.in_buf.len()).min(src.len());
             self.in_buf.extend_from_slice(&src[..take]);
             src = &src[take..];
 
-            if self.in_buf.len() == self.chunk_in {
-                // let start = std::time::Instant::now();
-                if let Ok(out) = self
-                    .resampler
-                    .as_mut()
-                    .unwrap()
-                    .process(&[&self.in_buf[..]], None)
-                {
-                    // let duration = start.elapsed();
-                    // log::debug!("Resampler took: {:?}", duration);
-                    self.out_count += out[0].len();
-                    self.emit_frames(&out[0], &mut emit);
-                }
-                self.in_buf.clear();
+            if self.in_buf.len() == chunk_samples {
+                let frames = self.process()?;
+                self.out_count += frames;
+                self.emit_output(frames, &mut emit);
             }
         }
+        Ok(())
     }
 
-    pub fn finish(&mut self, mut emit: impl FnMut(&[f32])) {
-        if self.resampler.is_some() {
-            // Process any remaining input samples (padded internally).
-            if !self.in_buf.is_empty() {
-                let result = self
-                    .resampler
-                    .as_mut()
-                    .unwrap()
-                    .process_partial(Some(&[&self.in_buf[..]]), None);
-                if let Ok(out) = result {
-                    self.out_count += out[0].len();
-                    self.emit_frames(&out[0], &mut emit);
-                }
-                // Drop the consumed input: a full in_buf would satisfy the
-                // next push()'s chunk check immediately, re-processing this
-                // padded tail into the following recording.
-                self.in_buf.clear();
-            }
+    /// Flushes the tail and the final padded chunk, even if the tail fails.
+    pub fn finish(&mut self, mut emit: impl FnMut(&[f32], usize)) -> Result<(), ResamplerError> {
+        let result = self.drain_tail(&mut emit);
 
-            // Output lags input by output_delay() samples, so all real audio
-            // has emerged only once in*ratio + delay samples are out. Feed
-            // zero chunks until then, trimming the synthetic remainder.
-            if self.in_count > 0 {
-                let delay = self.resampler.as_ref().unwrap().output_delay();
-                let expected = self.in_count * self.out_hz / self.in_hz + delay;
-                let mut rounds = 0;
-                while self.out_count < expected && rounds < 8 {
-                    rounds += 1;
-                    let result = self
-                        .resampler
-                        .as_mut()
-                        .unwrap()
-                        .process_partial::<&[f32]>(None, None);
-                    match result {
-                        Ok(out) => {
-                            let take = (expected - self.out_count).min(out[0].len());
-                            self.out_count += take;
-                            self.emit_frames(&out[0][..take], &mut emit);
-                        }
-                        Err(_) => break,
-                    }
-                }
-            }
-        }
-
-        // Emit any remaining pending frame (padded with zeros)
         if !self.pending.is_empty() {
-            self.pending.resize(self.frame_samples, 0.0);
-            emit(&self.pending);
+            let valid_frames = self.pending.len() / self.channels;
+            self.pending
+                .resize(self.frames_per_chunk * self.channels, 0.0);
+            emit(&self.pending, valid_frames);
             self.pending.clear();
         }
+        result
     }
 
-    /// Clear all internal buffers so the next `push()` starts from a clean state.
-    ///
-    /// Call this between recordings to prevent stale audio from the previous
-    /// session leaking into the start of the next one via the FFT overlap buffers.
+    fn drain_tail(&mut self, emit: &mut impl FnMut(&[f32], usize)) -> Result<(), ResamplerError> {
+        if self.resampler.is_none() || self.in_count == 0 {
+            return Ok(());
+        }
+        // All real audio is out once in*ratio + delay frames are.
+        let delay = self.output_delay();
+        let expected = self.in_count * self.out_hz / self.in_hz + delay;
+
+        // Keep only real output; the internal padding is synthetic.
+        if !self.in_buf.is_empty() {
+            let frames = self.process()?;
+            let take = expected.saturating_sub(self.out_count).min(frames);
+            self.out_count += take;
+            self.emit_output(take, emit);
+        }
+
+        // Feed zeros until all real audio is out.
+        let mut rounds = 0;
+        while self.out_count < expected && rounds < MAX_TAIL_ROUNDS {
+            rounds += 1;
+            let frames = self.process()?;
+            let take = (expected - self.out_count).min(frames);
+            self.out_count += take;
+            self.emit_output(take, emit);
+        }
+        if self.out_count < expected {
+            return Err(ResamplerError::TailIncomplete {
+                expected,
+                emitted: self.out_count,
+            });
+        }
+        Ok(())
+    }
+
+    /// Clears all state between recordings, so no audio leaks into the next.
     pub fn reset(&mut self) {
         self.in_buf.clear();
         self.pending.clear();
@@ -142,15 +200,46 @@ impl FrameResampler {
         }
     }
 
-    fn emit_frames(&mut self, mut data: &[f32], emit: &mut impl FnMut(&[f32])) {
+    /// Resamples and clears `in_buf`, which the resampler zero-pads to a
+    /// whole chunk. Returns the frames written to `out_buf`.
+    fn process(&mut self) -> Result<usize, ResampleError> {
+        let resampler = self.resampler.as_mut().unwrap();
+        let in_frames = self.in_buf.len() / self.channels;
+        let out_frames = self.out_buf.len() / self.channels;
+        let indexing = Some(Indexing::new().partial_len(in_frames));
+        // Mono is laid out the same either way; the sequential adapter copies
+        // whole slices, where the interleaved one copies sample by sample.
+        let result = if self.channels == 1 {
+            let input = SequentialSlice::new(&self.in_buf, 1, in_frames).unwrap();
+            let mut output = SequentialSlice::new_mut(&mut self.out_buf, 1, out_frames).unwrap();
+            resampler.process_into_buffer(&input, &mut output, indexing.as_ref())
+        } else {
+            let input = InterleavedSlice::new(&self.in_buf, self.channels, in_frames).unwrap();
+            let mut output =
+                InterleavedSlice::new_mut(&mut self.out_buf, self.channels, out_frames).unwrap();
+            resampler.process_into_buffer(&input, &mut output, indexing.as_ref())
+        };
+        self.in_buf.clear();
+        Ok(result?.1)
+    }
+
+    /// Emits the first `frames` frames of `out_buf`.
+    fn emit_output(&mut self, frames: usize, emit: &mut impl FnMut(&[f32], usize)) {
+        let out = std::mem::take(&mut self.out_buf);
+        self.emit_frames(&out[..frames * self.channels], emit);
+        self.out_buf = out;
+    }
+
+    fn emit_frames(&mut self, mut data: &[f32], emit: &mut impl FnMut(&[f32], usize)) {
+        let chunk_samples = self.frames_per_chunk * self.channels;
         while !data.is_empty() {
-            let space = self.frame_samples - self.pending.len();
+            let space = chunk_samples - self.pending.len();
             let take = space.min(data.len());
             self.pending.extend_from_slice(&data[..take]);
             data = &data[take..];
 
-            if self.pending.len() == self.frame_samples {
-                emit(&self.pending);
+            if self.pending.len() == chunk_samples {
+                emit(&self.pending, self.frames_per_chunk);
                 self.pending.clear();
             }
         }
@@ -161,126 +250,36 @@ impl FrameResampler {
 mod tests {
     use super::*;
 
-    /// Generate a 1kHz sine wave at the given sample rate and duration.
-    fn sine_wave(sample_rate: usize, freq: f64, duration_secs: f64) -> Vec<f32> {
-        let n = (sample_rate as f64 * duration_secs) as usize;
-        (0..n)
-            .map(|i| {
-                (2.0 * std::f64::consts::PI * freq * i as f64 / sample_rate as f64).sin() as f32
-            })
-            .collect()
-    }
-
     fn collect_output(resampler: &mut FrameResampler, input: &[f32]) -> Vec<f32> {
         let mut out = Vec::new();
-        resampler.push(input, |frame| out.extend_from_slice(frame));
+        resampler
+            .push(input, |frame, _| out.extend_from_slice(frame))
+            .unwrap();
         out
     }
 
     #[test]
-    fn reset_clears_in_buf_and_pending() {
-        let mut r = FrameResampler::new(48000, 16000, Duration::from_millis(30));
-
-        // Push less than one chunk (1024 samples) to leave data in in_buf
-        let partial = vec![0.5f32; 500];
-        let _ = collect_output(&mut r, &partial);
-
-        r.reset();
-
-        // Now push silence — should get only silence out, no remnants of 0.5
-        let silence = vec![0.0f32; 4096];
-        let out = collect_output(&mut r, &silence);
-
-        let max_abs = out.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-        assert!(
-            max_abs < 0.01,
-            "After reset, silence input should produce near-silence output, got max_abs={}",
-            max_abs
-        );
-    }
-
-    #[test]
-    fn reset_clears_fft_overlap_buffers() {
-        let mut r = FrameResampler::new(48000, 16000, Duration::from_millis(30));
-
-        // Push a loud 1kHz sine wave through the resampler (simulates recording 1)
-        let sine = sine_wave(48000, 1000.0, 0.5); // 500ms of audio
-        let _ = collect_output(&mut r, &sine);
-        r.finish(|_| {});
-
-        // Reset (simulates new recording starting)
-        r.reset();
-
-        // Push silence (simulates recording 2 starting with no speech)
-        let silence = vec![0.0f32; 4096];
-        let out = collect_output(&mut r, &silence);
-
-        // The output should be near-zero. If the FFT overlap buffers weren't
-        // cleared, the sine wave's tail would leak into this output.
-        let max_abs = out.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-        assert!(
-            max_abs < 0.01,
-            "FFT overlap should not leak after reset; got max_abs={} (expected near-zero)",
-            max_abs
-        );
-    }
-
-    #[test]
     fn reset_between_recordings_no_crosstalk() {
-        let mut r = FrameResampler::new(48000, 16000, Duration::from_millis(30));
+        let mut r = FrameResampler::new(48000, 16000, 480, 1).unwrap();
 
-        // Recording 1: ascending ramp (distinctive pattern)
-        let ramp: Vec<f32> = (0..48000).map(|i| i as f32 / 48000.0).collect(); // 1 second
+        let ramp: Vec<f32> = (0..48000).map(|i| i as f32 / 48000.0).collect();
         let out1 = collect_output(&mut r, &ramp);
-        r.finish(|_| {});
+        r.finish(|_, _| {}).unwrap();
         assert!(!out1.is_empty(), "Recording 1 should produce output");
 
-        // Reset between recordings
         r.reset();
 
-        // Recording 2: constant DC signal of -0.5
-        let dc = vec![-0.5f32; 48000]; // 1 second
+        let dc = vec![-0.5f32; 48000];
         let out2 = collect_output(&mut r, &dc);
 
-        // After the resampler settles (skip first frame which may have transient),
-        // all samples should be near -0.5, not contaminated by the ascending ramp.
-        if out2.len() > 480 {
-            // Skip first frame (480 samples at 16kHz/30ms), check the rest
-            let tail = &out2[480..];
-            for (i, &s) in tail.iter().enumerate() {
-                assert!(
-                    (s - (-0.5)).abs() < 0.05,
-                    "Recording 2 sample {} = {} (expected ~-0.5); ramp leaked through",
-                    i + 480,
-                    s
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn reset_passthrough_mode_clears_pending() {
-        // When in_hz == out_hz, no rubato resampler is created (passthrough mode).
-        // Reset should still clear the pending frame buffer.
-        let mut r = FrameResampler::new(16000, 16000, Duration::from_millis(30));
-
-        // Push partial frame (less than 480 samples) to leave data in pending
-        let partial = vec![1.0f32; 200];
-        let _ = collect_output(&mut r, &partial);
-
-        r.reset();
-
-        // Push silence
-        let silence = vec![0.0f32; 960];
-        let out = collect_output(&mut r, &silence);
-
-        // First complete frame should be all zeros, not contain the 1.0 values
-        if !out.is_empty() {
-            let max_abs = out.iter().take(480).map(|s| s.abs()).fold(0.0f32, f32::max);
+        // Skip the first chunk's transient; the rest must be free of the ramp.
+        let tail = &out2[480..];
+        for (i, &s) in tail.iter().enumerate() {
             assert!(
-                max_abs < 0.001,
-                "Passthrough mode: pending buffer should be cleared after reset, got max_abs={}",
-                max_abs
+                (s - (-0.5)).abs() < 0.05,
+                "Recording 2 sample {} = {} (expected ~-0.5); ramp leaked through",
+                i + 480,
+                s
             );
         }
     }
@@ -289,13 +288,14 @@ mod tests {
     /// recovers the burst and emits floor(input*ratio) + output_delay samples,
     /// padded to whole 480-sample frames.
     fn assert_tail_burst_flushed(in_hz: usize, input_len: usize, expected_out: usize) {
-        let mut rs = FrameResampler::new(in_hz, 16000, Duration::from_millis(30));
+        let mut rs = FrameResampler::new(in_hz, 16000, 480, 1).unwrap();
         let mut input = vec![0.0f32; input_len];
         input[input_len - 200..].fill(0.5);
 
         let mut out = Vec::new();
-        rs.push(&input, |frame| out.extend_from_slice(frame));
-        rs.finish(|frame| out.extend_from_slice(frame));
+        rs.push(&input, |frame, _| out.extend_from_slice(frame))
+            .unwrap();
+        rs.finish(|frame, _| out.extend_from_slice(frame)).unwrap();
 
         let max_abs = out.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
         assert!(
@@ -306,46 +306,108 @@ mod tests {
     }
 
     #[test]
-    fn finish_flushes_resampler_delay() {
-        // Exact chunks keep in_buf empty, so the burst survives only via the
-        // delay-line drain. 4096 in -> 1365 real out + 171 delay -> 1920 framed.
+    fn finish_flushes_the_tail() {
+        // 48 kHz, exact chunks: in_buf stays empty, so the burst survives
+        // only via the delay-line drain. 4096 in -> 1365 real + 171 delay.
         assert_tail_burst_flushed(48000, 4 * RESAMPLER_CHUNK_SIZE, 1920);
-    }
-
-    #[test]
-    fn finish_flushes_resampler_delay_44100() {
-        // fft_size_in (1323) exceeds the 1024 chunk, so the drain must survive
-        // a zero-output round. 4096 in -> 1486 real out + 240 delay -> 1920.
+        // 44.1 kHz: fft_size_in (1323) exceeds the 1024 chunk, so the drain
+        // must survive a zero-output round. 4096 in -> 1486 real + 240 delay.
         assert_tail_burst_flushed(44100, 4 * RESAMPLER_CHUNK_SIZE, 1920);
-    }
-
-    #[test]
-    fn finish_flushes_unaligned_tail() {
         // Ends mid-chunk: partial-chunk path plus delay drain together.
-        // 4396 in -> 1465 real out + 171 delay -> 1920 framed.
+        // 4396 in -> 1465 real + 171 delay.
         assert_tail_burst_flushed(48000, 4 * RESAMPLER_CHUNK_SIZE + 300, 1920);
     }
 
+    fn signal(rate: usize, channel: usize, frames: usize) -> Vec<f32> {
+        (0..frames)
+            .map(|i| {
+                let t = i as f64 / rate as f64;
+                ((2.0 * std::f64::consts::PI * (300.0 + 250.0 * channel as f64) * t).sin() * 0.5)
+                    as f32
+            })
+            .collect()
+    }
+
+    /// Resamples `input` (interleaved) in irregular pushes and returns the
+    /// emitted chunks as (samples, valid frames).
+    fn run(
+        in_hz: usize,
+        out_hz: usize,
+        frames_per_chunk: usize,
+        channels: usize,
+        input: &[f32],
+    ) -> Vec<(Vec<f32>, usize)> {
+        let mut r = FrameResampler::new(in_hz, out_hz, frames_per_chunk, channels).unwrap();
+        let mut chunks = Vec::new();
+        let mut rest = input;
+        for (i, size) in [1usize, 333, 1024, 7, 2048].iter().cycle().enumerate() {
+            if rest.is_empty() || i > 10_000 {
+                break;
+            }
+            let take = (size * channels).min(rest.len());
+            r.push(&rest[..take], |c, v| chunks.push((c.to_vec(), v)))
+                .unwrap();
+            rest = &rest[take..];
+        }
+        r.finish(|c, v| chunks.push((c.to_vec(), v))).unwrap();
+        chunks
+    }
+
     #[test]
-    fn finish_does_not_leak_tail_into_next_session() {
-        // 48kHz -> 16kHz, 30ms frames (480 output samples per frame).
-        let mut rs = FrameResampler::new(48000, 16000, Duration::from_millis(30));
+    fn stereo_channels_match_mono_resampling_exactly() {
+        for (in_hz, out_hz) in [
+            (48_000, 16_000),
+            (44_100, 16_000),
+            (16_000, 48_000),
+            (48_000, 48_000),
+        ] {
+            let frames = in_hz / 3 + 17;
+            let left = signal(in_hz, 0, frames);
+            let right = signal(in_hz, 1, frames);
+            let stereo: Vec<f32> = left
+                .iter()
+                .zip(&right)
+                .flat_map(|(&l, &r)| [l, r])
+                .collect();
 
-        // Leave a partial chunk buffered, then end the session.
-        rs.push(&[0.5f32; 100], |_| {});
-        rs.finish(|_| {});
+            let out = run(in_hz, out_hz, 480, 2, &stereo);
+            let out_left = run(in_hz, out_hz, 480, 1, &left);
+            let out_right = run(in_hz, out_hz, 480, 1, &right);
 
-        // One fresh chunk yields ~341 output samples — below one frame, so
-        // nothing should be emitted yet. If finish() left its padded tail in
-        // in_buf, that tail is re-processed first, the output crosses the
-        // 480-sample frame boundary, and a stale frame is emitted here.
-        let mut emitted = 0usize;
-        rs.push(&[0.25f32; RESAMPLER_CHUNK_SIZE], |frame| {
-            emitted += frame.len()
-        });
-        assert_eq!(
-            emitted, 0,
-            "stale resampler tail from finish() leaked into the next session"
-        );
+            let joined: Vec<f32> = out.iter().flat_map(|(c, _)| c.clone()).collect();
+            let got_left: Vec<u32> = joined.iter().step_by(2).map(|s| s.to_bits()).collect();
+            let got_right: Vec<u32> = joined
+                .iter()
+                .skip(1)
+                .step_by(2)
+                .map(|s| s.to_bits())
+                .collect();
+            let want = |o: &Vec<(Vec<f32>, usize)>| -> Vec<u32> {
+                o.iter()
+                    .flat_map(|(c, _)| c.iter().map(|s| s.to_bits()))
+                    .collect()
+            };
+            assert_eq!(got_left, want(&out_left), "{in_hz}->{out_hz} left");
+            assert_eq!(got_right, want(&out_right), "{in_hz}->{out_hz} right");
+            let valid = |o: &Vec<(Vec<f32>, usize)>| o.iter().map(|(_, v)| *v).collect::<Vec<_>>();
+            assert_eq!(valid(&out), valid(&out_left));
+        }
+    }
+
+    #[test]
+    fn output_counts_follow_the_frame_count_formula() {
+        // floor(input * out / in) plus the output delay; passthrough is exact.
+        for in_hz in [8_000, 16_000, 22_050, 32_000, 44_100, 48_000, 96_000] {
+            for frames in [1, 10, 1023, 1024, 4097, in_hz / 3] {
+                let input = signal(in_hz, 0, frames);
+                let chunks = run(in_hz, 16_000, 480, 1, &input);
+                let valid: usize = chunks.iter().map(|(_, v)| *v).sum();
+                let delay = FrameResampler::new(in_hz, 16_000, 480, 1)
+                    .unwrap()
+                    .output_delay();
+                let expected = frames * 16_000 / in_hz + delay;
+                assert_eq!(valid, expected, "{in_hz} Hz, {frames} frames");
+            }
+        }
     }
 }

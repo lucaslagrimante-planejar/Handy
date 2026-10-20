@@ -66,8 +66,8 @@ pub fn run_diarize_process() -> i32 {
 
 fn diarize_system_channel(model_path: &Path, dir: &Path) -> Result<Vec<SpeakerTurn>> {
     use transcribe_cpp::{
-        Diarize, Model, ModelOptions, RunExtension, RunOptions, SortformerPreset,
-        SortformerStreamOptions,
+        DiarizeExtension, DiarizeOptions, Model, ModelOptions, SortformerDiarizeOptions,
+        SortformerPreset,
     };
 
     let mut pcm = Vec::new();
@@ -81,18 +81,15 @@ fn diarize_system_channel(model_path: &Path, dir: &Path) -> Result<Vec<SpeakerTu
     transcribe_cpp::init_backends_default().context("initializing compute backends")?;
     let model = Model::load_with(model_path, &ModelOptions::default())
         .map_err(|e| anyhow!("loading {}: {e}", model_path.display()))?;
-    let mut session = model.session().map_err(|e| anyhow!("{e}"))?;
-    let options = RunOptions {
-        diarize: Diarize::On,
+    let mut session = model.diarize_session().map_err(|e| anyhow!("{e}"))?;
+    let options = DiarizeOptions {
         // Accuracy over latency: the whole recording is already available.
-        family: Some(RunExtension::Sortformer(SortformerStreamOptions {
+        family: Some(DiarizeExtension::Sortformer(SortformerDiarizeOptions {
             preset: Some(SortformerPreset::VeryHighLatency),
         })),
-        ..Default::default()
     };
-    let transcript = session.run(&pcm, &options).map_err(|e| anyhow!("{e}"))?;
-    let turns: Vec<SpeakerTurn> = transcript
-        .speaker_segments
+    let segments = session.run(&pcm, &options).map_err(|e| anyhow!("{e}"))?;
+    let turns: Vec<SpeakerTurn> = segments
         .iter()
         .map(|s| SpeakerTurn {
             t0_ms: s.t0_ms,
