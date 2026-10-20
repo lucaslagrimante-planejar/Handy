@@ -28,3 +28,10 @@ quebra no fim, depois de ~8 min de compilação.
 
 **How to apply:** use o override em todo build do fork até existir chave própria do updater (pendência
 do ADR 0001); ao criar CI de build, não reaproveite os workflows assinados do upstream.
+
+**Instalação local para teste (Linux):** o binário de `target/release/handy` procura
+`libtranscribe.so.0.3` em `target/lib/Handy` (RUNPATH `$ORIGIN/../lib/Handy`), que não existe na
+worktree. Extraia o `.deb` (`dpkg-deb -x`) para um diretório próprio, por exemplo
+`~/.local/opt/handy-dev`, e aponte `~/.local/bin/handy` para `usr/bin/handy` dele. Antes, copie
+`history.db` e `settings_store.json` de `~/.local/share/com.pais.handy`. As reuniões e gravações ficam
+no mesmo lugar; o build novo só lê esses diretórios.
