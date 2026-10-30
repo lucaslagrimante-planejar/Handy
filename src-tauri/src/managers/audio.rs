@@ -349,27 +349,36 @@ pub fn create_detector(
     })
 }
 
-fn create_capture_vad(
+/// A detector for `backend` with a recording's smoothing (pre-roll, onset,
+/// offline hangover): what keeps speech in a recording, and what cuts the
+/// silence out of other audio the same way.
+pub fn create_smoothed_detector(
     backend: VadBackend,
     app_handle: &tauri::AppHandle,
-) -> Result<CaptureVad, anyhow::Error> {
+) -> Result<SmoothedVad, anyhow::Error> {
     let detector: Box<dyn VoiceActivityDetector> = create_detector(backend, app_handle)?;
 
     // Earshot uses 16 ms frames while Silero uses 32 ms. Convert the existing
     // time-based capture profile to each detector's frame size so selecting a
     // backend does not shorten pre-roll, onset, or post-speech audio.
     let frame_samples = detector.frame_samples();
-    let prefill_frames = frames_for_duration_ms(VAD_PREFILL_MS, frame_samples);
+    Ok(SmoothedVad::new(
+        detector,
+        frames_for_duration_ms(VAD_PREFILL_MS, frame_samples),
+        frames_for_duration_ms(VAD_OFFLINE_HANGOVER_MS, frame_samples),
+        frames_for_duration_ms(VAD_ONSET_MS, frame_samples),
+    ))
+}
+
+fn create_capture_vad(
+    backend: VadBackend,
+    app_handle: &tauri::AppHandle,
+) -> Result<CaptureVad, anyhow::Error> {
+    let smoothed_vad = create_smoothed_detector(backend, app_handle)?;
+    let frame_samples = smoothed_vad.frame_samples();
     let offline_hangover_frames = frames_for_duration_ms(VAD_OFFLINE_HANGOVER_MS, frame_samples);
     let streaming_hangover_frames =
         frames_for_duration_ms(VAD_STREAMING_HANGOVER_MS, frame_samples);
-    let onset_frames = frames_for_duration_ms(VAD_ONSET_MS, frame_samples);
-    let smoothed_vad = SmoothedVad::new(
-        detector,
-        prefill_frames,
-        offline_hangover_frames,
-        onset_frames,
-    );
 
     info!(
         "Initialized {:?} VAD backend ({} samples/frame)",
@@ -486,6 +495,8 @@ pub struct AudioRecordingManager {
     /// retry re-enumerates. The system-default case is never cached — the
     /// recorder resolves the current default itself.
     cached_device: Arc<Mutex<Option<(String, String)>>>,
+    /// The last recording was all-zero samples, not just audio without speech.
+    last_input_silent: Arc<AtomicBool>,
 }
 
 impl AudioRecordingManager {
@@ -526,6 +537,7 @@ impl AudioRecordingManager {
             recording_active: Arc::new(AtomicBool::new(false)),
             capture_generation: Arc::new(AtomicU64::new(0)),
             cached_device: Arc::new(Mutex::new(None)),
+            last_input_silent: Arc::new(AtomicBool::new(false)),
         };
 
         // Always-on?  Open immediately.
@@ -951,11 +963,14 @@ impl AudioRecordingManager {
                 }
                 let captured = stopped.sink.finish();
                 self.return_vad(captured.vad);
+                self.last_input_silent
+                    .store(captured.input_silent, Ordering::Release);
                 captured.samples
             }
             Err(e) => {
                 // The recording and its detector are lost with the sink.
                 error!("Failed to stop recording: {e}");
+                self.last_input_silent.store(false, Ordering::Release);
                 if e.kind() != ErrorKind::NotRecording {
                     microphone.failed.store(true, Ordering::Release);
                 }
@@ -1178,6 +1193,11 @@ impl AudioRecordingManager {
         self.cancel_generation.load(Ordering::Acquire)
     }
 
+    /// Whether the last stopped recording's device sent only digital silence.
+    pub fn last_input_silent(&self) -> bool {
+        self.last_input_silent.load(Ordering::Acquire)
+    }
+
     pub fn was_cancelled_since(&self, generation: u64) -> bool {
         self.cancel_generation.load(Ordering::Acquire) != generation
     }
@@ -1219,6 +1239,7 @@ impl AudioRecordingManager {
                     Some(microphone) => self.collect_recording(microphone),
                     None => {
                         error!("Recorder not available");
+                        self.last_input_silent.store(false, Ordering::Release);
                         Vec::new()
                     }
                 };

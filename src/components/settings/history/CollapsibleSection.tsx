@@ -44,7 +44,7 @@ export const CollapsibleSection: React.FC<{
           type="button"
           onClick={toggle}
           aria-expanded={open}
-          className="flex items-center gap-1.5 cursor-pointer text-mid-gray hover:text-text transition-colors"
+          className="flex items-center gap-1.5 cursor-pointer text-ink-3 hover:text-text transition-colors"
         >
           <ChevronDown
             className={`w-4 h-4 transition-transform ${open ? "" : "-rotate-90"}`}

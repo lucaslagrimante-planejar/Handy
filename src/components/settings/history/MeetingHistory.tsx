@@ -82,7 +82,7 @@ const Step: React.FC<{ done: boolean; busy?: boolean; label: string }> = ({
   <span
     className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs border ${
       done
-        ? "border-mid-gray/20 text-text/60"
+        ? "border-line text-text/60"
         : "border-logo-primary/50 text-logo-primary bg-logo-primary/10"
     }`}
   >
@@ -145,7 +145,7 @@ export const MeetingHistory: React.FC = () => {
         </Button>
       }
     >
-      <div className="bg-background border border-mid-gray/20 rounded-lg divide-y divide-mid-gray/20">
+      <div className="bg-background border border-line rounded-lg divide-y divide-line">
         {meetings.map((meeting) => (
           <MeetingEntry
             key={meeting.name}
@@ -250,7 +250,7 @@ const MeetingEntry: React.FC<{
       className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs border cursor-pointer transition-colors ${
         highlight
           ? "border-logo-primary/40 text-text hover:bg-logo-primary/10"
-          : "border-mid-gray/20 text-text/70 hover:text-logo-primary"
+          : "border-line text-text/70 hover:text-logo-primary"
       }`}
     >
       <FileText className="w-3.5 h-3.5" />

@@ -26,6 +26,9 @@ serde = { version = "1", features = ["derive"] }
 
 [dependencies]
 once_cell = "1"
+# The OS's preferred languages (macOS, Linux; Windows' fallback). Already
+# pulled in by tauri-plugin-os.
+sys-locale = "0.3"
 tauri = { version = "2.11.5", features = [
   "protocol-asset",
   "macos-private-api",
@@ -55,6 +58,10 @@ enigo = "0.6.1"
 rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav", "flac", "mp3", "vorbis"] }
 cpal = "0.18"
 rtrb = "0.4.0"
+# Decodes files for transcription. rodio's version, plus the M4A/MP4 (AAC,
+# ALAC) and AIFF support rodio leaves out.
+symphonia = { version = "0.5.5", features = ["aac", "alac", "isomp4", "mp3", "aiff"] }
+# Resamples a decoded file to 16 kHz; the version handy-recorder already uses.
 rubato = "5.0.0"
 handy-recorder = "0.1"
 reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "deflate"] }
@@ -103,6 +110,7 @@ tauri-plugin-updater = "2.10.1"
 # version wry links against so the COM types are identical.
 webview2-com = "0.38"
 windows = { version = "0.61.3", features = [
+  "System_UserProfile",
   "Win32_Media_Audio_Endpoints",
   "Win32_System_Com_StructuredStorage",
   "Win32_System_DataExchange",
@@ -139,9 +147,20 @@ transcribe-cpp = { version = "0.4.0", default-features = false, features = [
 [target.'cfg(all(windows, target_arch = "aarch64"))'.dependencies]
 transcribe-cpp = { version = "0.4.0", default-features = false }
 
+# Whisper backend per macOS arch. Apple Silicon links the static Metal build.
+# Intel Macs are CPU-only: ggml-metal compiles its embedded shader library at
+# backend init (app launch, regardless of the selected accelerator), and on
+# some AMD GPUs that compile never finishes, hanging every model load (#2340).
+# Metal on Intel/AMD buys little at these model sizes anyway. With no features,
+# transcribe-cpp-sys sets TRANSCRIBE_METAL=OFF and pins a portable x86 CPU floor.
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+transcribe-cpp = { version = "0.4.0", default-features = false, features = ["metal"] }
+
+[target.'cfg(all(target_os = "macos", target_arch = "x86_64"))'.dependencies]
+transcribe-cpp = { version = "0.4.0", default-features = false }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
-transcribe-cpp = { version = "0.4.0", default-features = false, features = ["metal"] }
 # Used by the receipt-sequenced ("reliable") paste path for lazy NSPasteboard
 # promises. Versions track what Tauri already pulls in.
 objc2 = "0.6"
