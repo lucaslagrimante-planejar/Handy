@@ -38,8 +38,13 @@ pub fn convert_to_meeting(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 #[specta::specta]
-pub fn stop_meeting(app: AppHandle, then: StopAction) {
-    manager(&app).stop_with(then);
+pub fn stop_meeting(app: AppHandle, then: StopAction, participants: Option<String>) {
+    let dir = manager(&app).stop_with(then);
+    if let (Some(dir), Some(participants)) = (dir, participants) {
+        if let Err(e) = summary::save_participants(&dir, &participants) {
+            log::warn!("Cannot save the meeting participants: {e:#}");
+        }
+    }
 }
 
 /// Expand the meeting pill into the stop options (`open`), or collapse it.
@@ -66,13 +71,29 @@ pub fn get_meeting_status(app: AppHandle) -> MeetingStatus {
 }
 
 /// Run the AI step (revised transcript, summary, minutes) for a finished
-/// meeting, identified by its folder name.
+/// meeting, identified by its folder name. `participants`, when given,
+/// replaces the names saved for the meeting.
 #[tauri::command]
 #[specta::specta]
-pub fn summarize_meeting(app: AppHandle, name: String) -> Result<(), String> {
+pub fn summarize_meeting(
+    app: AppHandle,
+    name: String,
+    participants: Option<String>,
+) -> Result<(), String> {
     let dir = crate::meeting::meeting_dir(&app, &name).map_err(|e| format!("{e:#}"))?;
+    if let Some(participants) = participants {
+        summary::save_participants(&dir, &participants).map_err(|e| format!("{e:#}"))?;
+    }
     crate::meeting::start_summary(&app, &dir);
     Ok(())
+}
+
+/// Participant names saved for a meeting, the recorder first.
+#[tauri::command]
+#[specta::specta]
+pub fn get_meeting_participants(app: AppHandle, name: String) -> Result<Vec<String>, String> {
+    let dir = crate::meeting::meeting_dir(&app, &name).map_err(|e| format!("{e:#}"))?;
+    Ok(summary::read_participants(&dir))
 }
 
 #[tauri::command]

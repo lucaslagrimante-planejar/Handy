@@ -765,7 +765,9 @@
       "stopTranscribe": "Finish and transcribe",
       "stopSummarize": "Finish, transcribe and summarize",
       "stopNothing": "End without processing",
-      "stopNothingHint": "Audio and live transcript are kept; finish it later from History"
+      "stopNothingHint": "Audio and live transcript are kept; finish it later from History",
+      "participants": "Participants (your name first)",
+      "participantsHint": "Names separated by commas, yours first. The AI uses them in the summary and minutes."
     }
   },
   "whatsNew": {

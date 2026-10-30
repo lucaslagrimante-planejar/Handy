@@ -61,14 +61,24 @@ const OVERLAY_INVITE_WIDTH: f64 = 340.0;
 const OVERLAY_CARD_HEIGHT: f64 = 104.0;
 /// Meeting stop options: header plus three choices (`.cstop`).
 const OVERLAY_STOP_MENU_HEIGHT: f64 = 172.0;
+/// Participant names field of the stop options and of the "done" card
+/// (`.sparticipants`), absent on macOS, whose panel can't take the keyboard.
+const OVERLAY_PARTICIPANTS_HEIGHT: f64 = if cfg!(target_os = "macos") { 0.0 } else { 38.0 };
 
 /// Overlay window size (logical) for a given UI state.
 fn overlay_dimensions(state: &str) -> (f64, f64) {
     match state {
         "streaming" => (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT),
         "invite" => (OVERLAY_INVITE_WIDTH, OVERLAY_HEIGHT),
-        "done" | "summarized" => (OVERLAY_INVITE_WIDTH, OVERLAY_CARD_HEIGHT),
-        "stopmenu" => (OVERLAY_INVITE_WIDTH, OVERLAY_STOP_MENU_HEIGHT),
+        "done" => (
+            OVERLAY_INVITE_WIDTH,
+            OVERLAY_CARD_HEIGHT + OVERLAY_PARTICIPANTS_HEIGHT,
+        ),
+        "summarized" => (OVERLAY_INVITE_WIDTH, OVERLAY_CARD_HEIGHT),
+        "stopmenu" => (
+            OVERLAY_INVITE_WIDTH,
+            OVERLAY_STOP_MENU_HEIGHT + OVERLAY_PARTICIPANTS_HEIGHT,
+        ),
         _ => (OVERLAY_WIDTH, OVERLAY_HEIGHT),
     }
 }
@@ -660,6 +670,42 @@ pub fn set_overlay_hit_region(app: AppHandle, x: f64, y: f64, width: f64, height
     // Windows and macOS keep the whole window clickable for now.
     #[cfg(not(target_os = "linux"))]
     let _ = (app, x, y, width, height);
+}
+
+/// Lets the overlay take the keyboard while one of its text fields is in use
+/// (`enabled`), and gives it back afterwards. The overlay never takes focus
+/// otherwise, so it doesn't steal typing from the window below.
+#[tauri::command]
+#[specta::specta]
+pub fn set_overlay_keyboard(app: AppHandle, enabled: bool) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(overlay_window) = handle.get_webview_window("recording_overlay") else {
+            return;
+        };
+        #[cfg(target_os = "linux")]
+        if LAYER_SHELL_ACTIVE.load(Ordering::SeqCst) {
+            if let Ok(gtk_window) = overlay_window.gtk_window() {
+                gtk_window.set_keyboard_mode(if enabled {
+                    KeyboardMode::OnDemand
+                } else {
+                    KeyboardMode::None
+                });
+            }
+            return;
+        }
+        // macOS: the panel is built non-key (`can_become_key_window: false`)
+        // and is left alone.
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = overlay_window.set_focusable(enabled);
+            if enabled {
+                let _ = overlay_window.set_focus();
+            }
+        }
+        #[cfg(target_os = "macos")]
+        let _ = (overlay_window, enabled);
+    });
 }
 
 /// Notify the visible recording overlay that the input stream has delivered its

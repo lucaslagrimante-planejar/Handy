@@ -198,7 +198,7 @@ const MeetingEntry: React.FC<{
 
   const generate = () =>
     run(
-      async () => unwrap(await commands.summarizeMeeting(name)),
+      async () => unwrap(await commands.summarizeMeeting(name, null)),
       "settings.history.meetings.aiError",
     );
 
@@ -215,7 +215,7 @@ const MeetingEntry: React.FC<{
     if (!confirmed) return;
     await run(async () => {
       unwrap(await commands.deleteMeetingAiFiles(name));
-      if (thenGenerate) unwrap(await commands.summarizeMeeting(name));
+      if (thenGenerate) unwrap(await commands.summarizeMeeting(name, null));
     }, "settings.history.meetings.aiError");
   };
 

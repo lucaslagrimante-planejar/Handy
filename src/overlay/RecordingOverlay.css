@@ -620,6 +620,32 @@
   min-width: 0;
   padding-left: 36px; /* under the title, past the badge */
 }
+/* Participant names for the AI step: in the stop options and over the
+   post-meeting actions (overlay.rs OVERLAY_PARTICIPANTS_HEIGHT). */
+.sresult-field {
+  display: flex;
+  padding-left: 36px;
+}
+.sparticipants {
+  box-sizing: border-box;
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--s-hair);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--color-text);
+  font: 400 12px var(--s-font);
+  outline: none;
+  transition: border-color 150ms ease;
+}
+.sparticipants::placeholder {
+  color: var(--s-muted);
+}
+.sparticipants:focus {
+  border-color: var(--s-accent);
+}
 /* Long translations shrink the buttons (label ellipsis) instead of pushing
    them past the card. */
 .sresult-actions .sbtn {

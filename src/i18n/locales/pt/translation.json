@@ -765,7 +765,9 @@
       "stopTranscribe": "Finalizar e transcrever",
       "stopSummarize": "Finalizar, transcrever e resumir",
       "stopNothing": "Encerrar sem fazer nada",
-      "stopNothingHint": "Áudio e transcrição ao vivo ficam salvos; finalize depois pelo histórico"
+      "stopNothingHint": "Áudio e transcrição ao vivo ficam salvos; finalize depois pelo histórico",
+      "participants": "Participantes (seu nome primeiro)",
+      "participantsHint": "Nomes separados por vírgula, o seu primeiro. A IA usa os nomes no resumo e na ata."
     }
   },
   "whatsNew": {

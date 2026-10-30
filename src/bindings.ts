@@ -553,6 +553,14 @@ async showMainWindowCommand() : Promise<Result<null, string>> {
 async setOverlayHitRegion(x: number, y: number, width: number, height: number) : Promise<void> {
     await TAURI_INVOKE("set_overlay_hit_region", { x, y, width, height });
 },
+/**
+ * Lets the overlay take the keyboard while one of its text fields is in use
+ * (`enabled`), and gives it back afterwards. The overlay never takes focus
+ * otherwise, so it doesn't steal typing from the window below.
+ */
+async setOverlayKeyboard(enabled: boolean) : Promise<void> {
+    await TAURI_INVOKE("set_overlay_keyboard", { enabled });
+},
 async cancelOperation() : Promise<void> {
     await TAURI_INVOKE("cancel_operation");
 },
@@ -575,8 +583,8 @@ async convertToMeeting() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async stopMeeting(then: StopAction) : Promise<void> {
-    await TAURI_INVOKE("stop_meeting", { then });
+async stopMeeting(then: StopAction, participants: string | null) : Promise<void> {
+    await TAURI_INVOKE("stop_meeting", { then, participants });
 },
 /**
  * Expand the meeting pill into the stop options (`open`), or collapse it.
@@ -592,11 +600,31 @@ async getMeetingStatus() : Promise<MeetingStatus> {
 },
 /**
  * Run the AI step (revised transcript, summary, minutes) for a finished
- * meeting, identified by its folder name.
+ * meeting, identified by its folder name. `participants`, when given,
+ * replaces the names saved for the meeting.
  */
-async summarizeMeeting(name: string) : Promise<Result<null, string>> {
+async summarizeMeeting(name: string, participants: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("summarize_meeting", { name }) };
+    return { status: "ok", data: await TAURI_INVOKE("summarize_meeting", { name, participants }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Participant names saved for a meeting, the recorder first.
+ */
+async getMeetingParticipants(name: string) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_meeting_participants", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async openMeetingFolder(name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_meeting_folder", { name }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -608,14 +636,6 @@ async summarizeMeeting(name: string) : Promise<Result<null, string>> {
 async copyMeetingSummary(name: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("copy_meeting_summary", { name }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async openMeetingFolder(name: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("open_meeting_folder", { name }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

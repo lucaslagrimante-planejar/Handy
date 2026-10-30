@@ -29,6 +29,8 @@ pub const REVISED_MD: &str = "transcricao-revisada.md";
 pub const REVISED_SRT: &str = "transcricao-revisada.srt";
 pub const SUMMARY_MD: &str = "resumo.md";
 pub const MINUTES_MD: &str = "ata.md";
+/// Participant names typed by the user, one per line, the recorder first.
+pub const PARTICIPANTS_TXT: &str = "participantes.txt";
 
 /// Characters of transcript per revision request: small enough for a fast,
 /// faithful answer, large enough to give the model context.
@@ -207,14 +209,24 @@ async fn summarize(app: &AppHandle, dir: &Path) -> Result<PathBuf> {
     std::fs::write(dir.join(REVISED_SRT), render_srt(&entries))?;
 
     let transcript = plain_transcript(&entries);
+    let named = read_participants(dir);
     let context = format!(
-        "Título: {title}\nDuração: {}\nParticipantes identificados: {}\n\nTranscrição:\n{transcript}",
+        "Título: {title}\nDuração: {}\nParticipantes identificados: {}\n{}\nTranscrição:\n{transcript}",
         format_timestamp(entries.last().map_or(0, |e| e.end_ms)),
-        participants(&entries).join(", ")
+        participants(&entries).join(", "),
+        named_participants_line(&named)
     );
+    let (summary_prompt, minutes_prompt) = if named.is_empty() {
+        (SUMMARY_PROMPT.to_string(), MINUTES_PROMPT.to_string())
+    } else {
+        (
+            format!("{SUMMARY_PROMPT}\n{NAMED_PARTICIPANTS_RULE}"),
+            format!("{MINUTES_PROMPT}\n{NAMED_PARTICIPANTS_RULE}"),
+        )
+    };
     let (summary, minutes) = tokio::join!(
-        llm.ask(SUMMARY_PROMPT, context.clone(), None),
-        llm.ask(MINUTES_PROMPT, context, None)
+        llm.ask(&summary_prompt, context.clone(), None),
+        llm.ask(&minutes_prompt, context, None)
     );
     let summary_path = dir.join(SUMMARY_MD);
     std::fs::write(&summary_path, summary.context("gerando o resumo")? + "\n")?;
@@ -239,6 +251,56 @@ fn final_transcript(dir: &Path) -> Result<Vec<TranscriptEntry>> {
     };
     entries.sort_by_key(|e| e.start_ms);
     Ok(entries)
+}
+
+/// Names typed by the user before the AI step, the recorder first. Saved
+/// next to the transcript so a later "redo" reuses them.
+pub fn read_participants(dir: &Path) -> Vec<String> {
+    std::fs::read_to_string(dir.join(PARTICIPANTS_TXT))
+        .map(|text| parse_participants(&text))
+        .unwrap_or_default()
+}
+
+/// Save the names typed by the user; blank text forgets them.
+pub fn save_participants(dir: &Path, text: &str) -> Result<()> {
+    let names = parse_participants(text);
+    let path = dir.join(PARTICIPANTS_TXT);
+    if names.is_empty() {
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+        }
+        return Ok(());
+    }
+    std::fs::write(path, names.join("\n") + "\n")?;
+    Ok(())
+}
+
+/// Names separated by commas, semicolons, new lines or " e ".
+fn parse_participants(text: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for name in text
+        .split([',', ';', '\n'])
+        .flat_map(|part| part.split(" e "))
+        .map(|name| name.split_whitespace().collect::<Vec<_>>().join(" "))
+    {
+        if !name.is_empty() && !names.iter().any(|n| n.eq_ignore_ascii_case(&name)) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+fn named_participants_line(names: &[String]) -> String {
+    match names.split_first() {
+        None => String::new(),
+        Some((me, [])) => {
+            format!("Participantes informados por quem gravou: {me} (quem gravou, \"Eu\")\n")
+        }
+        Some((me, others)) => format!(
+            "Participantes informados por quem gravou: {me} (quem gravou, \"Eu\"), {}\n",
+            others.join(", ")
+        ),
+    }
 }
 
 fn participants(entries: &[TranscriptEntry]) -> Vec<String> {
@@ -410,6 +472,14 @@ de um assunto, diga isso. "
     };
 }
 
+/// Added to the prompts when the user typed the participants' names.
+const NAMED_PARTICIPANTS_RULE: &str = "Lista de participantes: quem gravou informou os nomes \
+de quem estava na reunião (\"Participantes informados\"). Chame \"Eu\" pelo nome de quem gravou. \
+Troque \"Pessoa N\" por um nome da lista quando a transcrição der indício claro de quem é (a pessoa \
+se apresenta, é chamada pelo nome e responde, ou o assunto não deixa dúvida); sem indício, mantenha \
+\"Pessoa N\". A separação de falantes é automática e pode juntar ou dividir pessoas: não force uma \
+correspondência um para um. Liste todos os nomes informados como participantes.";
+
 const SUMMARY_PROMPT: &str = concat!(
     "Você recebe a transcrição de uma reunião em português do Brasil, \
 com marcação de tempo e falante. Escreva um resumo executivo em Markdown, em português do Brasil.\n\
@@ -497,5 +567,19 @@ mod tests {
     fn think_blocks_are_dropped() {
         assert_eq!(strip_think_block("<think>hmm</think>\n# Ata"), "\n# Ata");
         assert_eq!(strip_think_block("# Ata"), "# Ata");
+    }
+
+    #[test]
+    fn participants_are_split_and_deduplicated() {
+        assert_eq!(
+            parse_participants(" Lucas,  Ana Maria; pedro e Joana\nlucas,, "),
+            vec!["Lucas", "Ana Maria", "pedro", "Joana"]
+        );
+        assert!(parse_participants(" , ;\n").is_empty());
+        assert_eq!(
+            named_participants_line(&["Lucas".into(), "Ana".into()]),
+            "Participantes informados por quem gravou: Lucas (quem gravou, \"Eu\"), Ana\n"
+        );
+        assert_eq!(named_participants_line(&[]), "");
     }
 }

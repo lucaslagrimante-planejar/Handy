@@ -49,6 +49,8 @@ const HIT_REGION_PAD = 6;
 // the user is speaking; cold loads can take 40s+.
 const SLOW_MODEL_LOAD_MS = 2000;
 
+const IS_MAC = navigator.userAgent.includes("Mac");
+
 const RecordingOverlay: React.FC = () => {
   const { t } = useTranslation();
   const [isVisible, setIsVisible] = useState(false);
@@ -99,6 +101,12 @@ const RecordingOverlay: React.FC = () => {
   const stateRef = useRef<OverlayState | null>(null);
   // "Copied" feedback on the summary button.
   const [copied, setCopied] = useState(false);
+  // Participant names typed before the AI step, and whether the overlay has
+  // the keyboard for that field right now.
+  const [participants, setParticipants] = useState("");
+  const participantsRef = useRef<HTMLInputElement>(null);
+  const keyboardRef = useRef(false);
+  const cardNameRef = useRef("");
 
   const smoothedLevelsRef = useRef<number[]>(Array(16).fill(0));
   // Live-text scroll-back: the text region "sticks" to the newest line while the
@@ -144,6 +152,7 @@ const RecordingOverlay: React.FC = () => {
             smoothedLevelsRef.current = Array(16).fill(0);
             setLevels(Array(WAVE_BARS).fill(0));
             setElapsed(0);
+            setParticipants("");
           }
           setCaptureReady(true);
           commands
@@ -179,6 +188,19 @@ const RecordingOverlay: React.FC = () => {
         (event) => {
           setCard(event.payload);
           setCopied(false);
+          // A meeting picked up again (e.g. from History) shows the names
+          // saved with it.
+          if (event.payload.name !== cardNameRef.current) {
+            cardNameRef.current = event.payload.name;
+            commands
+              .getMeetingParticipants(event.payload.name)
+              .then((result) => {
+                if (result.status === "ok" && result.data.length > 0) {
+                  setParticipants(result.data.join(", "));
+                }
+              })
+              .catch(() => {});
+          }
         },
       );
 
@@ -283,6 +305,15 @@ const RecordingOverlay: React.FC = () => {
     pinnedRef.current = true;
     setOverflowing(false);
   }, [session]);
+
+  // Give the keyboard back once the participants field is gone.
+  useEffect(() => {
+    if (isVisible && (state === "stopmenu" || state === "done")) return;
+    if (keyboardRef.current) {
+      keyboardRef.current = false;
+      commands.setOverlayKeyboard(false).catch(() => {});
+    }
+  }, [isVisible, state]);
 
   // The overlay window is a transparent rectangle bigger than the card, so tell
   // the backend to take clicks only over the card; the rest of the window lets
@@ -520,6 +551,42 @@ const RecordingOverlay: React.FC = () => {
     </button>
   );
 
+  // Participant names for the AI step. The overlay never holds the keyboard,
+  // so it asks for it on press and gives it back on blur. `submit` runs on
+  // Enter. Not on macOS, whose overlay panel can't take the keyboard.
+  const participantsField = (submit: () => void) =>
+    IS_MAC ? null : (
+      <input
+        ref={participantsRef}
+        className="sparticipants"
+        type="text"
+        value={participants}
+        placeholder={t("overlay.meeting.participants")}
+        title={t("overlay.meeting.participantsHint")}
+        aria-label={t("overlay.meeting.participantsHint")}
+        spellCheck={false}
+        autoComplete="off"
+        onChange={(e) => setParticipants(e.target.value)}
+        onPointerDown={() => {
+          if (keyboardRef.current) return;
+          keyboardRef.current = true;
+          commands
+            .setOverlayKeyboard(true)
+            .then(() => participantsRef.current?.focus())
+            .catch(() => {});
+        }}
+        onBlur={() => {
+          if (!keyboardRef.current) return;
+          keyboardRef.current = false;
+          commands.setOverlayKeyboard(false).catch(() => {});
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") submit();
+          else if (e.key === "Escape") participantsRef.current?.blur();
+        }}
+      />
+    );
+
   const checkIcon = (
     <svg viewBox="0 0 16 16" aria-hidden="true">
       <path
@@ -640,24 +707,27 @@ const RecordingOverlay: React.FC = () => {
             </button>
           </div>
           <div className="sstop-options">
+            {participantsField(() =>
+              commands.stopMeeting("summarize", participants),
+            )}
             <button
               className="sopt primary"
-              onClick={() => commands.stopMeeting("transcribe")}
-            >
-              {checkIcon}
-              {t("overlay.meeting.stopTranscribe")}
-            </button>
-            <button
-              className="sopt"
-              onClick={() => commands.stopMeeting("summarize")}
+              onClick={() => commands.stopMeeting("summarize", participants)}
             >
               {sparkIcon}
               {t("overlay.meeting.stopSummarize")}
             </button>
             <button
+              className="sopt"
+              onClick={() => commands.stopMeeting("transcribe", participants)}
+            >
+              {checkIcon}
+              {t("overlay.meeting.stopTranscribe")}
+            </button>
+            <button
               className="sopt plain"
               title={t("overlay.meeting.stopNothingHint")}
-              onClick={() => commands.stopMeeting("nothing")}
+              onClick={() => commands.stopMeeting("nothing", participants)}
             >
               {stopIcon}
               {t("overlay.meeting.stopNothing")}
@@ -713,6 +783,7 @@ const RecordingOverlay: React.FC = () => {
   // the user picks one.
   if (state === "done" || state === "summarized") {
     const done = state === "done";
+    const summarize = () => commands.summarizeMeeting(card.name, participants);
     const copySummary = async () => {
       const result = await commands.copyMeetingSummary(card.name);
       if (result.status === "ok") {
@@ -739,12 +810,12 @@ const RecordingOverlay: React.FC = () => {
             </div>
             {dismissBtn}
           </div>
+          {done && (
+            <div className="sresult-field">{participantsField(summarize)}</div>
+          )}
           <div className="sresult-actions">
             {done ? (
-              <button
-                className="sbtn"
-                onClick={() => commands.summarizeMeeting(card.name)}
-              >
+              <button className="sbtn" onClick={summarize}>
                 {sparkIcon}
                 <span>{t("overlay.meeting.summarize")}</span>
               </button>
