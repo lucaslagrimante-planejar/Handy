@@ -276,9 +276,11 @@ const RecordingOverlay: React.FC = () => {
   }, []);
 
   // Elapsed capture timer starts only once microphone samples are flowing.
+  // The stop options freeze it: the meeting still records until an option is
+  // picked, but the user is ending it. Going back to the pill re-reads the
+  // real time from the backend.
   useEffect(() => {
-    if (state !== "streaming" && state !== "meeting" && state !== "stopmenu")
-      return;
+    if (state !== "streaming" && state !== "meeting") return;
     if (!isVisible || !captureReady) return;
     const id = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => clearInterval(id);
