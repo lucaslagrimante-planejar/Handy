@@ -7,6 +7,11 @@
 //! What the AI proposes is checked against the texts before it is kept: a
 //! word must be in the reference (or post-processed) text and missing from
 //! what the dictation model wrote.
+//!
+//! Dictation only, both ways: it reads only the dictation history
+//! (`transcription_history`, which meetings never write; their audio lives
+//! in `meetings/`), and the words it learns are used only by the dictation
+//! engine, never by the meeting one.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};

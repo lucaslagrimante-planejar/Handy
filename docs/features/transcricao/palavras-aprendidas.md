@@ -2,7 +2,7 @@
 
 | Versão | Atualizado em |
 | ------ | ------------- |
-| 1      | 18/11/2026    |
+| 2      | 18/11/2026    |
 
 Funcionalidade própria deste fork. Em **Avançado → Palavras Aprendidas**, o botão "Aprender com o
 histórico" lê os ditados ainda não lidos e descobre os termos que o modelo de ditado errou. Esses
@@ -10,6 +10,15 @@ termos viram palavras personalizadas **só daquele modelo**, porque cada modelo 
 diferentes. O envio de texto ao provedor segue o
 [ADR 0002](../../adr/0002-processamento-local-e-provedor-escolhido-pelo-usuario.md): vai só texto,
 nunca áudio, e para o provedor de pós-processamento que o usuário configurou.
+
+**Só ditado, nunca reunião**, nos dois sentidos:
+
+- **Leitura:** lê só o histórico de ditados (`transcription_history`). O modo reunião nunca grava
+  ali; os áudios e transcrições de reunião ficam em `meetings/`, que esta funcionalidade não lê.
+  Um ditado convertido em reunião também não entra, porque a conversão cancela o ditado antes de
+  ele ir para o histórico.
+- **Uso:** as palavras aprendidas valem só no engine de ditado. A transcrição da reunião continua
+  só com as palavras manuais.
 
 ## Fluxo
 
@@ -38,9 +47,11 @@ usuário pode fixar outro modelo no seletor ao lado do botão.
 
 ## Uso na transcrição
 
-`RunSetup.custom_words` reúne as palavras manuais e as aprendidas do modelo carregado
-(`vocabulary::custom_words_for`). Essa lista substitui `settings.custom_words` tanto no vocabulário
-enviado ao modelo quanto na correção fuzzy, inclusive no engine da reunião.
+No engine de ditado, `RunSetup.custom_words` reúne as palavras manuais e as aprendidas do modelo
+carregado (`vocabulary::custom_words_for`). Essa lista substitui `settings.custom_words` tanto no
+vocabulário enviado ao modelo quanto na correção fuzzy. Os engines de fundo (reunião e referência)
+usam só as manuais: `setup_for` decide isso pelo `emits_model_state`, que só é verdadeiro no engine
+de ditado.
 
 ## Arquivos
 

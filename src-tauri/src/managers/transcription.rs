@@ -1165,12 +1165,18 @@ impl TranscriptionManager {
             language.intent(),
             language.source
         );
-        // The user's words plus those learned for the loaded model.
-        let custom_words = crate::vocabulary::custom_words_for(
-            &self.app_handle,
-            self.get_current_model().as_deref(),
-            &settings.custom_words,
-        );
+        // Dictation uses the user's words plus those learned for the loaded
+        // model. Learned words are a dictation-only feature: background
+        // engines (meetings, the vocabulary reference) keep the user's words.
+        let custom_words = if self.emits_model_state {
+            crate::vocabulary::custom_words_for(
+                &self.app_handle,
+                self.get_current_model().as_deref(),
+                &settings.custom_words,
+            )
+        } else {
+            settings.custom_words.clone()
+        };
         run_setup(info, settings, language, custom_words)
     }
 
