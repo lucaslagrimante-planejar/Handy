@@ -2,7 +2,7 @@
 
 | Versão | Atualizado em |
 | ------ | ------------- |
-| 2      | 18/11/2026    |
+| 3      | 18/11/2026    |
 
 Procedimento para trazer atualizações do projeto original sem perder as garantias de licença e
 de distribuição do produto (ver [ADR 0001](../adr/0001-comercializacao-do-fork-handy.md)).
@@ -62,13 +62,14 @@ Os arquivos do upstream só recebem ganchos de poucas linhas que chamam esse có
 funcionalidade nova, siga o mesmo padrão: código novo em arquivo novo, gancho mínimo no arquivo
 do upstream.
 
-| Parte               | Código do fork                                                                                   | Gancho no upstream                                                                                                                                  |
-| ------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Textos (26 idiomas) | `src/i18n/locales/*/fork.json`, `src/i18n/fork.ts`                                               | `src/i18n/index.ts` (mescla os dois), `src-tauri/build.rs` + `build_fork.rs` (tray), `scripts/check-translations.ts` + `check-translations-fork.ts` |
-| Overlay (tela)      | `src/overlay/meeting/` (`useMeetingOverlay.tsx`, `useOverlayHitRegion.ts`, `MeetingOverlay.css`) | `src/overlay/RecordingOverlay.tsx`: import, tipo do estado, chamada dos hooks, botão de reunião, timer e `renderMeeting`                            |
-| Overlay (janela)    | `src-tauri/src/meeting/overlay_ext.rs`                                                           | `src-tauri/src/overlay.rs`: tamanho dos estados, estado atual, `on_hidden`, `pub(crate)` em dois `static`                                           |
-| Bandeja             | `src-tauri/src/meeting/tray_ext.rs`                                                              | `src-tauri/src/tray.rs` (campo `meetings` e submenu), `src-tauri/src/lib.rs` (evento do menu)                                                       |
-| Comandos            | `src-tauri/src/commands/meeting.rs`                                                              | `src-tauri/src/lib.rs` (registro na lista de comandos)                                                                                              |
+| Parte               | Código do fork                                                                                             | Gancho no upstream                                                                                                                                                                                                                                        |
+| ------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Textos (26 idiomas) | `src/i18n/locales/*/fork.json`, `src/i18n/fork.ts`                                                         | `src/i18n/index.ts` (mescla os dois), `src-tauri/build.rs` + `build_fork.rs` (tray), `scripts/check-translations.ts` + `check-translations-fork.ts`                                                                                                       |
+| Overlay (tela)      | `src/overlay/meeting/` (`useMeetingOverlay.tsx`, `useOverlayHitRegion.ts`, `MeetingOverlay.css`)           | `src/overlay/RecordingOverlay.tsx`: import, tipo do estado, chamada dos hooks, botão de reunião, timer e `renderMeeting`                                                                                                                                  |
+| Overlay (janela)    | `src-tauri/src/meeting/overlay_ext.rs`                                                                     | `src-tauri/src/overlay.rs`: tamanho dos estados, estado atual, `on_hidden`, `pub(crate)` em dois `static`                                                                                                                                                 |
+| Bandeja             | `src-tauri/src/meeting/tray_ext.rs`                                                                        | `src-tauri/src/tray.rs` (campo `meetings` e submenu), `src-tauri/src/lib.rs` (evento do menu)                                                                                                                                                             |
+| Comandos            | `src-tauri/src/commands/meeting.rs`                                                                        | `src-tauri/src/lib.rs` (registro na lista de comandos)                                                                                                                                                                                                    |
+| Palavras aprendidas | `src-tauri/src/vocabulary/`, `src-tauri/src/commands/vocabulary.rs`, `src/components/settings/vocabulary/` | `lib.rs` (`mod` e comandos), `managers/transcription.rs` (`RunSetup.custom_words`), `managers/history.rs` (colunas `model_id`/`vocab_reviewed` e consultas), `actions.rs` e `transcription_jobs.rs` (gravam o modelo), `AdvancedSettings.tsx` (uma linha) |
 
 Os `translation.json` precisam continuar idênticos aos do upstream: texto novo do fork vai no
 `fork.json` do idioma, nunca no `translation.json`.

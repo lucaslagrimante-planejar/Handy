@@ -738,6 +738,50 @@ async deleteMeeting(name: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Read the unread dictations and learn the words their models got wrong.
+ */
+async learnCustomWords() : Promise<Result<LearnReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("learn_custom_words") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cancelLearnCustomWords() : Promise<void> {
+    await TAURI_INVOKE("cancel_learn_custom_words");
+},
+async getLearnedVocabulary() : Promise<LearnedVocabulary> {
+    return await TAURI_INVOKE("get_learned_vocabulary");
+},
+async removeLearnedWord(modelId: string, word: string) : Promise<Result<LearnedVocabulary, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_learned_word", { modelId, word }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async clearLearnedWords(modelId: string) : Promise<Result<LearnedVocabulary, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("clear_learned_words", { modelId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `None` goes back to the most accurate downloaded model.
+ */
+async setVocabularyReferenceModel(modelId: string | null) : Promise<Result<LearnedVocabulary, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_vocabulary_reference_model", { modelId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async isPortable() : Promise<boolean> {
     return await TAURI_INVOKE("is_portable");
 },
@@ -1486,7 +1530,35 @@ export type LanguageStatus =
  * Auto can't work here; `language` is used instead.
  */
 { kind: "auto_unavailable"; language: string; reason: AutoUnavailableReason }
+export type LearnReport = { 
+/**
+ * Dictations read in this run.
+ */
+analyzed: number; 
+/**
+ * New words per model id.
+ */
+learned: Partial<{ [key in string]: string[] }>; 
+/**
+ * Models whose dictations were left unread: no other model is
+ * downloaded to compare them with.
+ */
+without_reference: string[]; cancelled: boolean }
+export type LearnedVocabulary = { 
+/**
+ * Words per model id, oldest first.
+ */
+models?: Partial<{ [key in string]: string[] }>; 
+/**
+ * Model that re-transcribes the history; `None` picks the most accurate
+ * downloaded one.
+ */
+reference_model?: string | null }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
+/**
+ * A macOS privacy permission Handy asks for during onboarding.
+ */
+export type MacPermission = "accessibility" | "microphone"
 export type MeetingInfo = { 
 /**
  * Folder name, used as the meeting id.
@@ -1526,10 +1598,6 @@ export type MeetingStatus = { active: boolean;
  * Seconds since the meeting began, including adopted dictation audio.
  */
 elapsed_secs: number }
-/**
- * A macOS privacy permission Handy asks for during onboarding.
- */
-export type MacPermission = "accessibility" | "microphone"
 export type ModelInfo = { id: string; name: string; description: string; filename: string; source: ModelSource; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean; supports_streaming: boolean; supports_language_detection: boolean }
 export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null }
 /**

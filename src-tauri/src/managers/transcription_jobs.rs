@@ -319,6 +319,7 @@ impl TranscriptionJobManager {
         else {
             return Ok(JobEnd::Cancelled);
         };
+        let model_id = tm.get_current_model();
         if text.is_empty() {
             return Err(anyhow!("Recording contains no speech"));
         }
@@ -343,6 +344,9 @@ impl TranscriptionJobManager {
             processed.post_process_prompt,
             language,
         )?;
+        if let Some(model_id) = model_id {
+            hm.set_model_id(entry.id, &model_id)?;
+        }
         Ok(JobEnd::Finished {
             post_process_failed,
         })

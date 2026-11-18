@@ -1165,7 +1165,13 @@ impl TranscriptionManager {
             language.intent(),
             language.source
         );
-        run_setup(info, settings, language)
+        // The user's words plus those learned for the loaded model.
+        let custom_words = crate::vocabulary::custom_words_for(
+            &self.app_handle,
+            self.get_current_model().as_deref(),
+            &settings.custom_words,
+        );
+        run_setup(info, settings, language, custom_words)
     }
 
     /// The first window of speech in `audio`: silence is always cut out by
@@ -1291,7 +1297,7 @@ fn finish_text(outcome: RunOutcome, settings: &AppSettings) -> String {
     // Skip fuzzy correction if the model already got the custom words.
     post_process_transcription_text(
         text,
-        settings,
+        &setup.with_custom_words(settings),
         setup.custom_words_prompted(),
         &output_language,
         &setup.languages,
@@ -1307,9 +1313,19 @@ struct RunSetup {
     languages: Vec<String>,
     applied_language_hint: Option<String>,
     output_was_translated: bool,
+    /// The custom words this transcription uses: the user's plus those
+    /// learned for the loaded model.
+    custom_words: Vec<String>,
 }
 
 impl RunSetup {
+    /// `settings` with this transcription's custom words.
+    fn with_custom_words(&self, settings: &AppSettings) -> AppSettings {
+        let mut settings = settings.clone();
+        settings.custom_words = self.custom_words.clone();
+        settings
+    }
+
     /// Custom words went to the model as vocabulary; skip fuzzy correction.
     fn custom_words_prompted(&self) -> bool {
         !self.run_options.vocabulary.is_empty()
@@ -1350,7 +1366,12 @@ impl RunSetup {
 /// The loaded model's live capabilities (cheap GGUF-metadata reads) are the
 /// source of truth, not the ModelManager copy; translate is gated on what the
 /// model advertises.
-fn run_setup(info: &LoadedInfo, settings: &AppSettings, language: LanguageDecision) -> RunSetup {
+fn run_setup(
+    info: &LoadedInfo,
+    settings: &AppSettings,
+    language: LanguageDecision,
+    custom_words: Vec<String>,
+) -> RunSetup {
     let model_supports_translate = info.capabilities.supports_translate;
     let languages = info.capabilities.languages.clone();
     debug!(
@@ -1398,7 +1419,7 @@ fn run_setup(info: &LoadedInfo, settings: &AppSettings, language: LanguageDecisi
         task: run_plan.task,
         language: run_plan.language,
         target_language: run_plan.target_language,
-        vocabulary: vocabulary_for_model(info.supports_vocabulary, &settings.custom_words),
+        vocabulary: vocabulary_for_model(info.supports_vocabulary, &custom_words),
         ..Default::default()
     };
 
@@ -1415,6 +1436,7 @@ fn run_setup(info: &LoadedInfo, settings: &AppSettings, language: LanguageDecisi
         languages,
         applied_language_hint,
         output_was_translated,
+        custom_words,
     }
 }
 

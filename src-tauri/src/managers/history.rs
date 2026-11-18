@@ -37,7 +37,26 @@ static MIGRATIONS: &[M] = &[
 
 /// Nullable columns added outside [`MIGRATIONS`]; see
 /// [`HistoryManager::apply_migrations`].
-const ADDED_COLUMNS: &[&str] = &["source_name", "language", "language_source"];
+const ADDED_COLUMNS: &[&str] = &[
+    "source_name",
+    "language",
+    "language_source",
+    // Model that transcribed the entry; NULL for entries older than the column.
+    "model_id",
+    // Set once vocabulary learning has read the entry, so it is never re-read.
+    "vocab_reviewed",
+];
+
+/// A dictation that vocabulary learning has not read yet.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VocabularySample {
+    pub id: i64,
+    pub file_name: String,
+    /// `None` for entries saved before the model was recorded.
+    pub model_id: Option<String>,
+    pub transcription_text: String,
+    pub post_processed_text: Option<String>,
+}
 
 /// Every column a [`HistoryEntry`] is read from.
 const ENTRY_COLUMNS: &str = "id, file_name, timestamp, saved, title, transcription_text, \
@@ -281,6 +300,7 @@ impl HistoryManager {
 
     /// Save a new history entry to the database.
     /// The WAV file should already have been written to the recordings directory.
+    #[allow(clippy::too_many_arguments)]
     pub fn save_entry(
         &self,
         file_name: String,
@@ -289,6 +309,7 @@ impl HistoryManager {
         post_processed_text: Option<String>,
         post_process_prompt: Option<String>,
         language: Option<LanguageDecision>,
+        model_id: Option<String>,
     ) -> Result<HistoryEntry> {
         let (language, language_source) = split_language(language);
         let entry = self.insert_entry(HistoryEntry {
@@ -305,10 +326,76 @@ impl HistoryManager {
             language,
             language_source,
         })?;
+        if let Some(model_id) = model_id {
+            self.set_model_id(entry.id, &model_id)?;
+        }
 
         self.cleanup_old_entries()?;
 
         Ok(entry)
+    }
+
+    /// Record which model transcribed entry `id`. A new transcription is new
+    /// material for vocabulary learning, so the entry is unread again.
+    pub fn set_model_id(&self, id: i64, model_id: &str) -> Result<()> {
+        Self::set_model_id_with_conn(&self.get_connection()?, id, model_id)
+    }
+
+    fn set_model_id_with_conn(conn: &Connection, id: i64, model_id: &str) -> Result<()> {
+        conn.execute(
+            "UPDATE transcription_history SET model_id = ?1, vocab_reviewed = NULL WHERE id = ?2",
+            params![model_id, id],
+        )?;
+        Ok(())
+    }
+
+    /// Up to `limit` dictations with text that vocabulary learning hasn't
+    /// read, newest first. Transcribed files are left out: they can be hours
+    /// long, and the reference model would have to re-run all of it.
+    pub fn entries_pending_vocabulary(&self, limit: usize) -> Result<Vec<VocabularySample>> {
+        Self::entries_pending_vocabulary_with_conn(&self.get_connection()?, limit)
+    }
+
+    fn entries_pending_vocabulary_with_conn(
+        conn: &Connection,
+        limit: usize,
+    ) -> Result<Vec<VocabularySample>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, file_name, model_id, transcription_text, post_processed_text
+             FROM transcription_history
+             WHERE vocab_reviewed IS NULL
+               AND source_name IS NULL
+               AND TRIM(transcription_text) != ''
+             ORDER BY timestamp DESC, id DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok(VocabularySample {
+                id: row.get("id")?,
+                file_name: row.get("file_name")?,
+                model_id: row.get("model_id")?,
+                transcription_text: row.get("transcription_text")?,
+                post_processed_text: row.get("post_processed_text")?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Never hand entries `ids` to vocabulary learning again.
+    pub fn mark_vocabulary_reviewed(&self, ids: &[i64]) -> Result<()> {
+        Self::mark_vocabulary_reviewed_with_conn(&mut self.get_connection()?, ids)
+    }
+
+    fn mark_vocabulary_reviewed_with_conn(conn: &mut Connection, ids: &[i64]) -> Result<()> {
+        let tx = conn.transaction()?;
+        for id in ids {
+            tx.execute(
+                "UPDATE transcription_history SET vocab_reviewed = '1' WHERE id = ?1",
+                params![id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     /// Save the entry for a file whose audio is already at `file_name`.
@@ -786,6 +873,46 @@ mod tests {
     fn user_version(conn: &Connection) -> i32 {
         conn.pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("read user_version")
+    }
+
+    #[test]
+    fn vocabulary_learning_reads_each_dictation_once() {
+        let mut conn = Connection::open_in_memory().expect("open in-memory db");
+        HistoryManager::apply_migrations(&mut conn).expect("migrate");
+        insert_entry(&conn, 100, "older", None);
+        insert_entry(&conn, 200, "newer", Some("Newer."));
+        insert_entry(&conn, 300, "   ", None);
+        conn.execute(
+            "INSERT INTO transcription_history (file_name, timestamp, title, transcription_text, source_name)
+             VALUES ('f.wav', 400, 't', 'from a file', 'f.mp3')",
+            [],
+        )
+        .expect("insert file entry");
+        HistoryManager::set_model_id_with_conn(&conn, 2, "model-a").expect("set model");
+
+        let pending =
+            HistoryManager::entries_pending_vocabulary_with_conn(&conn, 10).expect("read pending");
+        let texts: Vec<&str> = pending
+            .iter()
+            .map(|s| s.transcription_text.as_str())
+            .collect();
+        assert_eq!(texts, ["newer", "older"]);
+        assert_eq!(pending[0].model_id.as_deref(), Some("model-a"));
+        assert_eq!(pending[0].post_processed_text.as_deref(), Some("Newer."));
+        assert_eq!(pending[1].model_id, None);
+
+        HistoryManager::mark_vocabulary_reviewed_with_conn(&mut conn, &[pending[0].id])
+            .expect("mark reviewed");
+        let pending =
+            HistoryManager::entries_pending_vocabulary_with_conn(&conn, 10).expect("read pending");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].transcription_text, "older");
+
+        // A new transcription of a read entry is read again.
+        HistoryManager::set_model_id_with_conn(&conn, 2, "model-b").expect("set model");
+        let pending =
+            HistoryManager::entries_pending_vocabulary_with_conn(&conn, 1).expect("read pending");
+        assert_eq!(pending[0].model_id.as_deref(), Some("model-b"));
     }
 
     #[test]

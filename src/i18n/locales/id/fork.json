@@ -61,6 +61,29 @@
         "aiError": "AI step failed: {{error}}",
         "openError": "Could not open the file: {{error}}"
       }
+    },
+    "advanced": {
+      "learnedWords": {
+        "title": "Learned Words",
+        "description": "Re-transcribes unread dictations from the history with a more accurate downloaded model and asks the post-processing AI which terms the current model got wrong. The words found are used only with that model. Only text is sent to the AI, never audio.",
+        "auto": "Most accurate downloaded model",
+        "learn": "Learn from history",
+        "cancel": "Stop",
+        "starting": "Starting…",
+        "phase": {
+          "transcribing": "Re-transcribing {{done}} of {{total}}…",
+          "comparing": "Comparing with AI {{done}} of {{total}}…"
+        },
+        "done": "Dictations read: {{count}}.",
+        "found": "New words: {{words}}.",
+        "noneFound": "No new words.",
+        "nothingNew": "No new dictations to read.",
+        "stopped": "Stopped before the end.",
+        "noReference": "No more accurate model downloaded to compare these models' dictations",
+        "failed": "Could not learn words",
+        "forModel": "Learned for {{model}} ({{count}})",
+        "clear": "Clear"
+      }
     }
   },
   "overlay": {

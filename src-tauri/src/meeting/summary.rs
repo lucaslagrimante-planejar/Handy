@@ -55,14 +55,14 @@ pub fn is_done(dir: &Path) -> bool {
     dir.join(SUMMARY_MD).exists() && dir.join(MINUTES_MD).exists()
 }
 
-struct Llm {
+pub(crate) struct Llm {
     provider: PostProcessProvider,
     api_key: String,
     model: String,
 }
 
 impl Llm {
-    fn from_settings(app: &AppHandle) -> Result<Self> {
+    pub(crate) fn from_settings(app: &AppHandle) -> Result<Self> {
         let settings = get_settings(app);
         let provider = settings
             .active_post_process_provider()
@@ -91,7 +91,7 @@ impl Llm {
         })
     }
 
-    async fn ask(
+    pub(crate) async fn ask(
         &self,
         system: &str,
         user: String,

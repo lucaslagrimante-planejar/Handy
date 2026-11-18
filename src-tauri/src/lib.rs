@@ -34,6 +34,7 @@ mod transcription_hook;
 mod tray;
 mod tray_i18n;
 mod utils;
+mod vocabulary;
 pub mod webkit_renderer;
 
 pub use cli::CliArgs;
@@ -782,6 +783,12 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting::delete_meeting_ai_files,
             commands::meeting::finalize_meeting,
             commands::meeting::delete_meeting,
+            commands::vocabulary::learn_custom_words,
+            commands::vocabulary::cancel_learn_custom_words,
+            commands::vocabulary::get_learned_vocabulary,
+            commands::vocabulary::remove_learned_word,
+            commands::vocabulary::clear_learned_words,
+            commands::vocabulary::set_vocabulary_reference_model,
             commands::is_portable,
             commands::is_update_checks_locked,
             commands::get_app_dir_path,

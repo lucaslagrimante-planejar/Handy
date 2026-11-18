@@ -106,6 +106,7 @@ impl TranscriptionManager {
 
         debug!("Transcribed {} chunks in the background", transcripts.len());
         let language = setup.spoken_language(agreed_language(&transcripts).as_deref());
+        let settings = setup.with_custom_words(&settings);
         let paragraphs: Vec<String> = transcripts
             .into_iter()
             .map(|t| {

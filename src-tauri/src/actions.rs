@@ -788,6 +788,8 @@ impl ShortcutAction for TranscribeAction {
                     // as an error, so it never starts a batch run.
                     let transcription_time = Instant::now();
                     let transcription_result = tm.transcribe_recording(samples);
+                    // Read before an immediate unload can clear it.
+                    let model_id = tm.get_current_model();
 
                     // Await WAV save and verify
                     let wav_saved = match wav_handle.await {
@@ -866,6 +868,7 @@ impl ShortcutAction for TranscribeAction {
                                     processed.post_processed_text.clone(),
                                     processed.post_process_prompt.clone(),
                                     language,
+                                    model_id,
                                 ) {
                                     error!("Failed to save history entry: {}", err);
                                 }
@@ -1017,6 +1020,7 @@ impl ShortcutAction for TranscribeAction {
                                     None,
                                     None,
                                     None,
+                                    model_id,
                                 ) {
                                     error!("Failed to save failed history entry: {}", save_err);
                                 }
