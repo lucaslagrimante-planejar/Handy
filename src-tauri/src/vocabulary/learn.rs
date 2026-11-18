@@ -10,8 +10,9 @@
 //!
 //! Dictation only, both ways: it reads only the dictation history
 //! (`transcription_history`, which meetings never write; their audio lives
-//! in `meetings/`), and the words it learns are used only by the dictation
-//! engine, never by the meeting one.
+//! in `meetings/`), and the words it learns are used only in dictation,
+//! never in a meeting, even when one falls back to the dictation engine
+//! (see [`super::store::without_learned_words`]).
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};

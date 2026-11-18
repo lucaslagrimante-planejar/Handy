@@ -998,8 +998,13 @@ impl TranscriptionManager {
 
     /// Transcribe a whole clip in batch: a re-transcribed history entry, or
     /// a file from the CLI.
+    ///
+    /// Never a dictation (meetings and the vocabulary reference call this),
+    /// so it runs without learned words, whichever engine it is on.
     pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
-        Ok(self.complete(Instant::now(), audio, None)?.text)
+        crate::vocabulary::without_learned_words(|| {
+            Ok(self.complete(Instant::now(), audio, None)?.text)
+        })
     }
 
     /// Transcribe a finished recording: what its live decode produced, or a
@@ -1165,18 +1170,14 @@ impl TranscriptionManager {
             language.intent(),
             language.source
         );
-        // Dictation uses the user's words plus those learned for the loaded
-        // model. Learned words are a dictation-only feature: background
-        // engines (meetings, the vocabulary reference) keep the user's words.
-        let custom_words = if self.emits_model_state {
-            crate::vocabulary::custom_words_for(
-                &self.app_handle,
-                self.get_current_model().as_deref(),
-                &settings.custom_words,
-            )
-        } else {
-            settings.custom_words.clone()
-        };
+        // Dictation: the user's words plus those learned for the loaded model.
+        // Inside `transcribe` (meetings, the vocabulary reference) only the
+        // user's words.
+        let custom_words = crate::vocabulary::custom_words_for(
+            &self.app_handle,
+            self.get_current_model().as_deref(),
+            &settings.custom_words,
+        );
         run_setup(info, settings, language, custom_words)
     }
 

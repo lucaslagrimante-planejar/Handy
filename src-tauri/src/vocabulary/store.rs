@@ -3,6 +3,7 @@
 //! the user's own custom words, but only while that model is loaded: each
 //! model mishears different words.
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -72,10 +73,34 @@ pub fn update(
     Ok(vocabulary)
 }
 
+thread_local! {
+    /// Set while this thread runs a transcription that isn't a dictation.
+    static WITHOUT_LEARNED_WORDS: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Run `transcription` with only the user's custom words. Learned words are
+/// for dictation; a meeting must never use them, even when it falls back to
+/// the dictation engine. A batch transcription resolves its words on the
+/// calling thread, so the flag reaches it.
+pub fn without_learned_words<T>(transcription: impl FnOnce() -> T) -> T {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            WITHOUT_LEARNED_WORDS.with(|flag| flag.set(self.0));
+        }
+    }
+    let _reset = Reset(WITHOUT_LEARNED_WORDS.with(|flag| flag.replace(true)));
+    transcription()
+}
+
+fn learned_words_allowed() -> bool {
+    !WITHOUT_LEARNED_WORDS.with(Cell::get)
+}
+
 /// The custom words a transcription on `model_id` uses: the user's, then the
-/// ones learned for that model.
+/// ones learned for that model (dictation only, see [`without_learned_words`]).
 pub fn custom_words_for(app: &AppHandle, model_id: Option<&str>, manual: &[String]) -> Vec<String> {
-    let Some(model_id) = model_id else {
+    let Some(model_id) = model_id.filter(|_| learned_words_allowed()) else {
         return manual.to_vec();
     };
     match load(app).models.get(model_id) {
@@ -133,6 +158,27 @@ mod tests {
         let mut learned = words(&["a1", "b2", "c3"]);
         merge_learned(&mut learned, &words(&["B2", "d4", "e5"]), 4);
         assert_eq!(learned, words(&["b2", "c3", "d4", "e5"]));
+    }
+
+    #[test]
+    fn learned_words_are_off_only_inside_without_learned_words() {
+        assert!(learned_words_allowed());
+        without_learned_words(|| {
+            assert!(!learned_words_allowed());
+            // Nested calls keep it off and restore it on the way out.
+            without_learned_words(|| assert!(!learned_words_allowed()));
+            assert!(!learned_words_allowed());
+        });
+        assert!(learned_words_allowed());
+
+        let panicked = std::panic::catch_unwind(|| without_learned_words(|| panic!("boom")));
+        assert!(panicked.is_err());
+        assert!(learned_words_allowed());
+
+        // Another thread (a live dictation's worker) is unaffected.
+        without_learned_words(|| {
+            assert!(std::thread::spawn(learned_words_allowed).join().unwrap());
+        });
     }
 
     #[test]

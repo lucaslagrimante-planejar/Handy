@@ -5,4 +5,4 @@
 pub mod learn;
 pub mod store;
 
-pub use store::custom_words_for;
+pub use store::{custom_words_for, without_learned_words};

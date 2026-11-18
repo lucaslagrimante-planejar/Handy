@@ -2,7 +2,7 @@
 
 | Versão | Atualizado em |
 | ------ | ------------- |
-| 2      | 18/11/2026    |
+| 3      | 18/11/2026    |
 
 Funcionalidade própria deste fork. Em **Avançado → Palavras Aprendidas**, o botão "Aprender com o
 histórico" lê os ditados ainda não lidos e descobre os termos que o modelo de ditado errou. Esses
@@ -17,8 +17,8 @@ nunca áudio, e para o provedor de pós-processamento que o usuário configurou.
   ali; os áudios e transcrições de reunião ficam em `meetings/`, que esta funcionalidade não lê.
   Um ditado convertido em reunião também não entra, porque a conversão cancela o ditado antes de
   ele ir para o histórico.
-- **Uso:** as palavras aprendidas valem só no engine de ditado. A transcrição da reunião continua
-  só com as palavras manuais.
+- **Uso:** as palavras aprendidas valem só no ditado. A transcrição da reunião continua só com as
+  palavras manuais, inclusive quando o modelo de reunião não carrega e ela usa o engine de ditado.
 
 ## Fluxo
 
@@ -47,11 +47,16 @@ usuário pode fixar outro modelo no seletor ao lado do botão.
 
 ## Uso na transcrição
 
-No engine de ditado, `RunSetup.custom_words` reúne as palavras manuais e as aprendidas do modelo
-carregado (`vocabulary::custom_words_for`). Essa lista substitui `settings.custom_words` tanto no
-vocabulário enviado ao modelo quanto na correção fuzzy. Os engines de fundo (reunião e referência)
-usam só as manuais: `setup_for` decide isso pelo `emits_model_state`, que só é verdadeiro no engine
-de ditado.
+No ditado, `RunSetup.custom_words` reúne as palavras manuais e as aprendidas do modelo carregado
+(`vocabulary::custom_words_for`). Essa lista substitui `settings.custom_words` tanto no vocabulário
+enviado ao modelo quanto na correção fuzzy.
+
+A reunião e o modelo de referência transcrevem por `TranscriptionManager::transcribe`, caminho que
+o ditado não usa. Esse método roda dentro de `vocabulary::without_learned_words`, uma flag
+thread-local que faz `custom_words_for` devolver só as manuais. Assim a regra vale por **quem
+chama**, não por qual engine roda: cobre o fallback da reunião para o engine de ditado. O setup de
+um batch é resolvido na thread de quem chamou, então a flag chega até ele. As threads do ditado ao
+vivo não são afetadas.
 
 ## Arquivos
 
