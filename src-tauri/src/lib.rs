@@ -317,21 +317,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             "copy_last_transcript" => {
                 tray::copy_last_transcript(app);
             }
-            "meetings_folder" => match meeting::meetings_root(app) {
-                Ok(root) => {
-                    let _ = std::fs::create_dir_all(&root);
-                    meeting::open_meeting_dir(app, &root);
-                }
-                Err(e) => log::warn!("Meetings folder unavailable: {e:#}"),
-            },
-            id if id.starts_with("meeting_summarize:") || id.starts_with("meeting_open:") => {
-                let (action, name) = id.split_once(':').unwrap();
-                match meeting::meeting_dir(app, name) {
-                    Ok(dir) if action == "meeting_summarize" => meeting::start_summary(app, &dir),
-                    Ok(dir) => meeting::open_meeting_dir(app, &dir),
-                    Err(e) => log::warn!("Meeting menu action failed: {e:#}"),
-                }
-            }
+            id if meeting::tray_ext::is_menu_id(id) => meeting::tray_ext::on_menu_event(app, id),
             "unload_model" => {
                 let transcription_manager = app.state::<Arc<TranscriptionManager>>();
                 if !transcription_manager.is_model_loaded() {
@@ -775,8 +761,8 @@ pub fn run(cli_args: CliArgs) {
             secure_input::run_keyboard_diagnostic,
             trigger_update_check,
             show_main_window_command,
-            overlay::set_overlay_hit_region,
-            overlay::set_overlay_keyboard,
+            meeting::overlay_ext::set_overlay_hit_region,
+            meeting::overlay_ext::set_overlay_keyboard,
             commands::cancel_operation,
             commands::meeting::start_meeting,
             commands::meeting::convert_to_meeting,

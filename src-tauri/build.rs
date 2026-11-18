@@ -1,3 +1,6 @@
+#[path = "build_fork.rs"]
+mod build_fork;
+
 fn main() {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     build_apple_intelligence_bridge();
@@ -294,6 +297,7 @@ fn generate_tray_translations() {
 
         let content = fs::read_to_string(&json_path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let parsed = build_fork::with_fork_strings(parsed, &path);
 
         if let Some(mut tray) = parsed.get("tray").cloned() {
             let titles = parsed

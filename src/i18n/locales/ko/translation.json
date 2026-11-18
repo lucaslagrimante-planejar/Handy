@@ -8,11 +8,6 @@
     "quit": "종료",
     "cancel": "취소",
     "secureInputWarning": "⚠ Secure Input으로 단축키가 차단됨",
-    "meetings": "Meetings",
-    "meetingSummarize": "Generate summary and minutes",
-    "meetingSummarizing": "Generating summary...",
-    "meetingOpen": "Open folder",
-    "meetingsFolder": "Open meetings folder",
     "language": "언어",
     "autoLanguage": "자동",
     "otherLanguages": "기타 언어"
@@ -353,10 +348,6 @@
           "transcribe_with_post_process": {
             "name": "후처리 단축키",
             "description": "선택 사항: 항상 AI 후처리를 적용하는 전용 단축키입니다."
-          },
-          "meeting": {
-            "name": "Meeting Shortcut",
-            "description": "Starts or stops transcribing a meeting: your microphone and the computer's audio, saved as it goes."
           }
         },
         "errors": {
@@ -714,49 +705,6 @@
       "cancelTranscription": "전사 취소",
       "transcribing": "전사 중...",
       "transcriptionFailed": "전사에 실패했습니다. 재시도 아이콘을 사용하여 다시 전사할 수 있습니다.",
-      "meetings": {
-        "title": "Meetings",
-        "openFolder": "Open meetings folder",
-        "openMeetingFolder": "Open this meeting's folder",
-        "copy": "Copy transcript (revised, if available)",
-        "delete": "Delete meeting",
-        "deleteConfirm": "Delete this whole meeting? Audio, original transcript and AI-generated content will be removed. This cannot be undone.",
-        "state": {
-          "recording": "Recording…",
-          "finishing": "Finishing transcript…",
-          "unfinished": "Transcript incomplete",
-          "transcribed": "Transcript",
-          "summarizing": "Transcript",
-          "summarized": "Transcript"
-        },
-        "diarized": "Speakers separated",
-        "notDiarized": "Speakers not separated",
-        "docs": {
-          "summary": "Summary",
-          "minutes": "Minutes",
-          "revised": "Revised transcript",
-          "revisedSrt": "Revised subtitles (SRT)",
-          "original": "Original transcript",
-          "originalSrt": "Original subtitles (SRT)"
-        },
-        "unfinished": "The meeting was interrupted before the transcript was finished. What was said is saved.",
-        "finalize": "Finish transcript",
-        "finalizeError": "Failed to finish the transcript: {{error}}",
-        "retryDiarization": "Try separating speakers again",
-        "aiPending": "Pending: transcript review, summary and minutes",
-        "generate": "Generate with AI",
-        "complete": "Complete with AI",
-        "generating": "Generating review, summary and minutes…",
-        "provider": "Uses the Post Processing provider: {{provider}} · {{model}}.",
-        "providerMissing": "Set a provider, model and API key in Post Processing.",
-        "textOnly": "Only the transcript text is sent, never the audio. The original transcript is not changed.",
-        "redo": "Redo with AI",
-        "redoConfirm": "Delete the AI-generated content and generate it again with {{model}}? The original transcript stays intact.",
-        "deleteAi": "Delete AI content",
-        "deleteAiConfirm": "Delete the summary, minutes and revised transcript? The original transcript and audio stay intact, and you can generate them again later (even with another model).",
-        "aiError": "AI step failed: {{error}}",
-        "openError": "Could not open the file: {{error}}"
-      },
       "notTranscribed": "전사되지 않았습니다. 재시도 아이콘을 사용하여 전사할 수 있습니다.",
       "transcribeFile": "파일 받아쓰기",
       "mediaFiles": "오디오 및 비디오",
@@ -1034,32 +982,7 @@
   "overlay": {
     "transcribing": "텍스트로 변환 중...",
     "processing": "처리 중...",
-    "loadingModel": "모델 로딩 중...",
-    "meeting": {
-      "start": "Switch to meeting",
-      "stop": "End meeting",
-      "invite": "{{app}} call: transcribe the meeting?",
-      "inviteAction": "Transcribe",
-      "dismiss": "Dismiss",
-      "done": "Transcription finished",
-      "summarize": "Summarize with AI",
-      "openFolder": "Open folder",
-      "summarizing": "Generating summary...",
-      "suggest": "Call detected: switch to meeting",
-      "finishing": "Finishing transcript...",
-      "summarized": "Summary and minutes ready",
-      "copySummary": "Copy summary",
-      "copied": "Copied",
-      "stopTitle": "End meeting",
-      "stopRecorded": "{{time}} recorded",
-      "keepRecording": "Keep recording",
-      "stopTranscribe": "Finish and transcribe",
-      "stopSummarize": "Finish, transcribe and summarize",
-      "stopNothing": "End without processing",
-      "stopNothingHint": "Audio and live transcript are kept; finish it later from History",
-      "participants": "Participants (your name first)",
-      "participantsHint": "Names separated by commas, yours first. The AI uses them in the summary and minutes."
-    }
+    "loadingModel": "모델 로딩 중..."
   },
   "secureInput": {
     "blockedWithCulprit_one": "{{name}}이(가) 단축키 1개를 차단하고 있을 수 있습니다",

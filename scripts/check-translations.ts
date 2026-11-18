@@ -2,6 +2,8 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
+import { withForkFile } from "./check-translations-fork";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Configuration
@@ -81,7 +83,7 @@ function loadTranslationFile(lang: string): TranslationData | null {
 
   try {
     const content = fs.readFileSync(filePath, "utf8");
-    return JSON.parse(content) as TranslationData;
+    return withForkFile(lang, JSON.parse(content) as TranslationData);
   } catch (error) {
     console.error(colorize(`✗ Error loading ${lang}/translation.json:`, "red"));
     console.error(`  ${(error as Error).message}`);

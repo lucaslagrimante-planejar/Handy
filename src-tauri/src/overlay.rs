@@ -3,7 +3,6 @@ use crate::notices::Notice;
 use crate::settings;
 use crate::settings::{OverlayPosition, OverlayStyle};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
 
@@ -56,17 +55,6 @@ const OVERLAY_HEIGHT: f64 = 50.0;
 const OVERLAY_STREAM_WIDTH: f64 = 400.0;
 const OVERLAY_STREAM_HEIGHT: f64 = 120.0;
 
-// Meeting pills with buttons — the call invite (label, action, dismiss) and
-// the post-meeting card (title, note and a row of actions).
-const OVERLAY_INVITE_WIDTH: f64 = 340.0;
-/// Post-meeting card with its actions row (RecordingOverlay.css `.cresult`).
-const OVERLAY_CARD_HEIGHT: f64 = 104.0;
-/// Meeting stop options: header plus three choices (`.cstop`).
-const OVERLAY_STOP_MENU_HEIGHT: f64 = 172.0;
-/// Participant names field of the stop options and of the "done" card
-/// (`.sparticipants`), absent on macOS, whose panel can't take the keyboard.
-const OVERLAY_PARTICIPANTS_HEIGHT: f64 = if cfg!(target_os = "macos") { 0.0 } else { 38.0 };
-
 const NOTICE_STATE: &str = "notice";
 const LIVE_NOTICE_STATE: &str = "live_notice";
 
@@ -89,34 +77,14 @@ fn notice_state(session_is_live: bool) -> &'static str {
 
 /// Overlay window size (logical) for a given UI state.
 fn overlay_dimensions(state: &str) -> (f64, f64) {
+    if let Some(size) = crate::meeting::overlay_ext::dimensions(state) {
+        return size;
+    }
     if is_live_state(state) {
-        return (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT);
+        (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT)
+    } else {
+        (OVERLAY_WIDTH, OVERLAY_HEIGHT)
     }
-    match state {
-        "invite" => (OVERLAY_INVITE_WIDTH, OVERLAY_HEIGHT),
-        "done" => (
-            OVERLAY_INVITE_WIDTH,
-            OVERLAY_CARD_HEIGHT + OVERLAY_PARTICIPANTS_HEIGHT,
-        ),
-        "summarized" => (OVERLAY_INVITE_WIDTH, OVERLAY_CARD_HEIGHT),
-        "stopmenu" => (
-            OVERLAY_INVITE_WIDTH,
-            OVERLAY_STOP_MENU_HEIGHT + OVERLAY_PARTICIPANTS_HEIGHT,
-        ),
-        _ => (OVERLAY_WIDTH, OVERLAY_HEIGHT),
-    }
-}
-
-/// State last shown by the overlay, or `None` while it is hidden.
-static CURRENT_OVERLAY_STATE: Mutex<Option<String>> = Mutex::new(None);
-
-/// What the overlay is showing right now (`"recording"`, `"meeting"`, ...).
-pub fn current_overlay_state() -> Option<String> {
-    CURRENT_OVERLAY_STATE.lock().unwrap().clone()
-}
-
-pub fn is_overlay_enabled() -> bool {
-    OVERLAY_ENABLED.load(Ordering::Relaxed)
 }
 
 static LAST_MIC_LEVEL_EMIT: AtomicU64 = AtomicU64::new(0);
@@ -589,7 +557,7 @@ fn show_overlay_state_on_main(app_handle: &AppHandle, state: &str) {
         // Invalidate any delayed hide still in flight from a previous session
         // (see `hide_recording_overlay`).
         OVERLAY_SHOW_GENERATION.fetch_add(1, Ordering::SeqCst);
-        *CURRENT_OVERLAY_STATE.lock().unwrap() = Some(state.to_string());
+        crate::meeting::overlay_ext::set_current_state(Some(state));
 
         #[cfg(target_os = "linux")]
         let shown_with_layer_shell = if LAYER_SHELL_ACTIVE.load(Ordering::SeqCst) {
@@ -669,87 +637,6 @@ fn show_overlay_state_on_main(app_handle: &AppHandle, state: &str) {
     }
 }
 
-/// Limits where the overlay window takes clicks to the visible card, given in
-/// the webview's CSS pixels. The window is a transparent rectangle larger than
-/// the card (and kept sized for the biggest state), so without this its empty
-/// corners swallow clicks meant for the windows below. An empty rectangle lets
-/// every click through, which the overlay sends while it is hidden.
-#[tauri::command]
-#[specta::specta]
-pub fn set_overlay_hit_region(app: AppHandle, x: f64, y: f64, width: f64, height: f64) {
-    #[cfg(target_os = "linux")]
-    {
-        // GTK widgets are only safe to touch from the main thread.
-        let handle = app.clone();
-        let _ = app.run_on_main_thread(move || {
-            let Some(overlay_window) = handle.get_webview_window("recording_overlay") else {
-                return;
-            };
-            match overlay_window.gtk_window() {
-                Ok(gtk_window) => {
-                    use gtk::cairo::{RectangleInt, Region};
-                    use gtk::prelude::WidgetExt;
-
-                    let region = if width > 0.0 && height > 0.0 {
-                        let left = x.floor() as i32;
-                        let top = y.floor() as i32;
-                        Region::create_rectangle(&RectangleInt::new(
-                            left,
-                            top,
-                            (x + width).ceil() as i32 - left,
-                            (y + height).ceil() as i32 - top,
-                        ))
-                    } else {
-                        Region::create()
-                    };
-                    gtk_window.input_shape_combine_region(Some(&region));
-                }
-                Err(error) => log::error!("Failed to access GTK overlay window: {error}"),
-            }
-        });
-    }
-
-    // Windows and macOS keep the whole window clickable for now.
-    #[cfg(not(target_os = "linux"))]
-    let _ = (app, x, y, width, height);
-}
-
-/// Lets the overlay take the keyboard while one of its text fields is in use
-/// (`enabled`), and gives it back afterwards. The overlay never takes focus
-/// otherwise, so it doesn't steal typing from the window below.
-#[tauri::command]
-#[specta::specta]
-pub fn set_overlay_keyboard(app: AppHandle, enabled: bool) {
-    let handle = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        let Some(overlay_window) = handle.get_webview_window("recording_overlay") else {
-            return;
-        };
-        #[cfg(target_os = "linux")]
-        if LAYER_SHELL_ACTIVE.load(Ordering::SeqCst) {
-            if let Ok(gtk_window) = overlay_window.gtk_window() {
-                gtk_window.set_keyboard_mode(if enabled {
-                    KeyboardMode::OnDemand
-                } else {
-                    KeyboardMode::None
-                });
-            }
-            return;
-        }
-        // macOS: the panel is built non-key (`can_become_key_window: false`)
-        // and is left alone.
-        #[cfg(not(target_os = "macos"))]
-        {
-            let _ = overlay_window.set_focusable(enabled);
-            if enabled {
-                let _ = overlay_window.set_focus();
-            }
-        }
-        #[cfg(target_os = "macos")]
-        let _ = (overlay_window, enabled);
-    });
-}
-
 /// Notify the visible recording overlay that the input stream has delivered its
 /// first sample chunk. Audio feedback uses the same backend readiness signal,
 /// but this targeted event is skipped when overlays are disabled.
@@ -785,16 +672,6 @@ pub fn show_transcribing_overlay(app_handle: &AppHandle) {
 /// Shows the processing overlay window
 pub fn show_processing_overlay(app_handle: &AppHandle) {
     show_overlay_state(app_handle, "processing");
-}
-
-/// Shows the compact meeting overlay (icon, level, timer, stop button)
-pub fn show_meeting_overlay(app_handle: &AppHandle) {
-    show_overlay_state(app_handle, "meeting");
-}
-
-/// Shows the "a call is in progress, transcribe it?" invite
-pub fn show_meeting_invite(app_handle: &AppHandle) {
-    show_overlay_state(app_handle, "invite");
 }
 
 /// Shows `notice` in place of the session's overlay and fades it after
@@ -914,7 +791,7 @@ pub fn hide_recording_overlay(app_handle: &AppHandle) {
         // Snapshot before doing anything observable, so any show that lands
         // after this point invalidates the delayed hide below.
         let scheduled_at = OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst);
-        *CURRENT_OVERLAY_STATE.lock().unwrap() = None;
+        crate::meeting::overlay_ext::set_current_state(None);
         // Emit event to trigger fade-out animation
         let _ = overlay_window.emit("hide-overlay", ());
         // Hide the window after a short delay to allow animation to complete,
@@ -928,8 +805,7 @@ pub fn hide_recording_overlay(app_handle: &AppHandle) {
             }
             let _ = window_clone.hide();
         });
-        // A post-meeting card waiting under whatever was just hidden.
-        crate::meeting::restore_card(app_handle);
+        crate::meeting::overlay_ext::on_hidden(app_handle);
     }
 }
 
@@ -937,12 +813,12 @@ pub fn hide_recording_overlay(app_handle: &AppHandle) {
 // reading the Tauri store on every audio callback (~24 Hz during recording).
 // Defaults to false so the audio path doesn't emit until lib.rs::setup
 // populates the cache from initial settings.
-static OVERLAY_ENABLED: AtomicBool = AtomicBool::new(false);
+pub(crate) static OVERLAY_ENABLED: AtomicBool = AtomicBool::new(false);
 
 /// Tracks whether gtk-layer-shell was successfully initialized (Linux only).
 /// Used to skip layer-shell calls when the window is a regular fallback.
 #[cfg(target_os = "linux")]
-static LAYER_SHELL_ACTIVE: AtomicBool = AtomicBool::new(false);
+pub(crate) static LAYER_SHELL_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// Update the cached overlay-enabled flag. Called from `lib.rs` at
 /// startup after settings load, and from `change_overlay_style_setting`

@@ -2,6 +2,7 @@ import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 import { locale } from "@tauri-apps/plugin-os";
 import { LANGUAGE_METADATA } from "./languages";
+import { withForkStrings } from "./fork";
 import { commands } from "@/bindings";
 import {
   getLanguageDirection,
@@ -20,7 +21,9 @@ const resources: Record<string, { translation: Record<string, unknown> }> = {};
 for (const [path, module] of Object.entries(localeModules)) {
   const langCode = path.match(/\.\/locales\/(.+)\/translation\.json/)?.[1];
   if (langCode) {
-    resources[langCode] = { translation: module.default };
+    resources[langCode] = {
+      translation: withForkStrings(langCode, module.default),
+    };
   }
 }
 

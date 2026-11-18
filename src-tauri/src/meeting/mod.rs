@@ -26,6 +26,8 @@ mod writer;
 
 mod capture;
 mod detect;
+pub mod overlay_ext;
+pub mod tray_ext;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -166,13 +168,13 @@ impl MeetingManager {
 
     /// Expand the meeting pill into the stop options, or collapse it back.
     pub fn show_stop_menu(&self, open: bool) {
-        if !self.is_active() || !overlay::is_overlay_enabled() {
+        if !self.is_active() || !overlay_ext::is_overlay_enabled() {
             return;
         }
         if open {
             overlay::show_overlay_state(&self.app, "stopmenu");
         } else {
-            overlay::show_meeting_overlay(&self.app);
+            overlay_ext::show_meeting_overlay(&self.app);
         }
     }
 
@@ -287,8 +289,8 @@ impl MeetingManager {
             .inspect_err(|_| set_in_progress(&dir, false))?;
 
         info!("Meeting started: {}", dir.display());
-        if overlay::is_overlay_enabled() {
-            overlay::show_meeting_overlay(&self.app);
+        if overlay_ext::is_overlay_enabled() {
+            overlay_ext::show_meeting_overlay(&self.app);
         } else {
             notify(
                 "Reunião em gravação",
@@ -327,7 +329,7 @@ impl MeetingManager {
         set_tray_state(&self.app, TrayIconState::Idle);
         if then == StopAction::Nothing {
             overlay::hide_recording_overlay(&self.app);
-        } else if overlay::is_overlay_enabled() {
+        } else if overlay_ext::is_overlay_enabled() {
             let chained = then == StopAction::Summarize;
             show_card_step(&self.app, "finishing", &meeting.dir, None, chained);
         } else {
@@ -344,7 +346,7 @@ impl MeetingManager {
     /// The user closed the call invite or the post-meeting card. A dismissed
     /// invite is not shown again during the same call.
     pub fn dismiss_invite(&self) {
-        match overlay::current_overlay_state().as_deref() {
+        match overlay_ext::current_overlay_state().as_deref() {
             Some("invite") => {
                 self.invite_dismissed.store(true, Ordering::Release);
                 overlay::hide_recording_overlay(&self.app);
@@ -665,13 +667,13 @@ fn show_card_step(
 fn present_card(app: &AppHandle, card: &MeetingCard) {
     use tauri::Emitter;
 
-    let free = match overlay::current_overlay_state().as_deref() {
+    let free = match overlay_ext::current_overlay_state().as_deref() {
         None => true,
         // The pill (or stop menu) of a meeting that already stopped.
         Some("meeting" | "stopmenu") => !app.state::<Arc<MeetingManager>>().is_active(),
         state => is_card_stage(state),
     };
-    if !overlay::is_overlay_enabled() || !free {
+    if !overlay_ext::is_overlay_enabled() || !free {
         return;
     }
     let _ = app.emit_to("recording_overlay", "meeting-card", card);
@@ -681,7 +683,7 @@ fn present_card(app: &AppHandle, card: &MeetingCard) {
 /// The user closed the card.
 pub fn dismiss_card(app: &AppHandle) {
     CARD.lock().unwrap().take();
-    if is_card_stage(overlay::current_overlay_state().as_deref()) {
+    if is_card_stage(overlay_ext::current_overlay_state().as_deref()) {
         overlay::hide_recording_overlay(app);
     }
 }
@@ -695,7 +697,7 @@ pub fn restore_card(app: &AppHandle) {
     let app = app.clone();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(400));
-        let busy = overlay::current_overlay_state().is_some()
+        let busy = overlay_ext::current_overlay_state().is_some()
             || app.state::<Arc<AudioRecordingManager>>().is_recording()
             || app.state::<Arc<MeetingManager>>().is_active();
         if busy {
@@ -716,7 +718,7 @@ fn ai_note(app: &AppHandle) -> Option<String> {
 /// Announce a finished meeting: the overlay card when the overlay is on, else
 /// a notification that stays on screen until the user acts on it.
 fn offer_summary(app: &AppHandle, dir: &Path, note: Option<String>) {
-    if overlay::is_overlay_enabled() {
+    if overlay_ext::is_overlay_enabled() {
         show_card(app, "done", dir, note.or_else(|| ai_note(app)));
         return;
     }
@@ -757,7 +759,7 @@ fn summarize(app: &AppHandle, dir: &Path, chained: bool) {
         Ok(task) => task,
         Err(e) => {
             warn!("Meeting summary not started: {e:#}");
-            if overlay::is_overlay_enabled() {
+            if overlay_ext::is_overlay_enabled() {
                 show_card(app, "done", dir, Some(format!("{e:#}")));
             } else {
                 notify("Falha ao gerar resumo e ata", &format!("{e:#}"));
@@ -765,7 +767,7 @@ fn summarize(app: &AppHandle, dir: &Path, chained: bool) {
             return;
         }
     };
-    if overlay::is_overlay_enabled() {
+    if overlay_ext::is_overlay_enabled() {
         show_card_step(app, "summarizing", dir, None, chained);
     }
     meetings_changed(app);
@@ -777,7 +779,7 @@ fn summarize(app: &AppHandle, dir: &Path, chained: bool) {
         match result {
             Ok(path) => {
                 info!("Meeting summary ready: {}", path.display());
-                if overlay::is_overlay_enabled() {
+                if overlay_ext::is_overlay_enabled() {
                     show_card(&app, "summarized", &dir, None);
                     return;
                 }
@@ -795,7 +797,7 @@ fn summarize(app: &AppHandle, dir: &Path, chained: bool) {
             }
             Err(e) => {
                 error!("Meeting summary failed: {e:#}");
-                if overlay::is_overlay_enabled() {
+                if overlay_ext::is_overlay_enabled() {
                     show_card(&app, "done", &dir, Some(format!("Falha no resumo: {e:#}")));
                 } else {
                     notify("Falha ao gerar resumo e ata", &format!("{e:#}"));
@@ -1016,7 +1018,7 @@ pub fn spawn_call_watcher(app: AppHandle) {
                         handled = false;
                         announced = false;
                         manager.invite_dismissed.store(false, Ordering::Release);
-                        if overlay::current_overlay_state().as_deref() == Some("invite") {
+                        if overlay_ext::current_overlay_state().as_deref() == Some("invite") {
                             overlay::hide_recording_overlay(&app);
                         }
                         continue;
@@ -1032,7 +1034,7 @@ pub fn spawn_call_watcher(app: AppHandle) {
                 };
                 if handled
                     || manager.invite_dismissed.load(Ordering::Acquire)
-                    || !overlay::is_overlay_enabled()
+                    || !overlay_ext::is_overlay_enabled()
                 {
                     continue;
                 }
@@ -1044,12 +1046,12 @@ pub fn spawn_call_watcher(app: AppHandle) {
                 let recording = app.state::<Arc<AudioRecordingManager>>().is_recording();
                 // The invite outranks the post-meeting card, which comes back
                 // once the invite goes away.
-                let state = overlay::current_overlay_state();
+                let state = overlay_ext::current_overlay_state();
                 let overlay_free = state.is_none() || is_card_stage(state.as_deref());
                 if !recording && overlay_free {
                     let _ = app.emit_to("recording_overlay", "meeting-invite", name);
                     info!("Offering meeting mode for the {name} call");
-                    overlay::show_meeting_invite(&app);
+                    overlay_ext::show_meeting_invite(&app);
                 }
             }
         });

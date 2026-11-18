@@ -8,11 +8,6 @@
     "quit": "Afsluiten",
     "cancel": "Annuleren",
     "secureInputWarning": "⚠ Sneltoetsen geblokkeerd door Secure Input",
-    "meetings": "Meetings",
-    "meetingSummarize": "Generate summary and minutes",
-    "meetingSummarizing": "Generating summary...",
-    "meetingOpen": "Open folder",
-    "meetingsFolder": "Open meetings folder",
     "language": "Taal",
     "autoLanguage": "Automatisch",
     "otherLanguages": "Andere talen"
@@ -353,10 +348,6 @@
           "transcribe_with_post_process": {
             "name": "Sneltoets voor naverwerking",
             "description": "Optioneel: Een specifieke sneltoets die altijd AI-naverwerking toepast op je transcriptie."
-          },
-          "meeting": {
-            "name": "Meeting Shortcut",
-            "description": "Starts or stops transcribing a meeting: your microphone and the computer's audio, saved as it goes."
           }
         },
         "errors": {
@@ -714,49 +705,6 @@
       "cancelTranscription": "Transcriptie annuleren",
       "transcribing": "Transcriberen...",
       "transcriptionFailed": "Transcriptie mislukt. Je kunt het opnieuw proberen via het herlaad-pictogram.",
-      "meetings": {
-        "title": "Meetings",
-        "openFolder": "Open meetings folder",
-        "openMeetingFolder": "Open this meeting's folder",
-        "copy": "Copy transcript (revised, if available)",
-        "delete": "Delete meeting",
-        "deleteConfirm": "Delete this whole meeting? Audio, original transcript and AI-generated content will be removed. This cannot be undone.",
-        "state": {
-          "recording": "Recording…",
-          "finishing": "Finishing transcript…",
-          "unfinished": "Transcript incomplete",
-          "transcribed": "Transcript",
-          "summarizing": "Transcript",
-          "summarized": "Transcript"
-        },
-        "diarized": "Speakers separated",
-        "notDiarized": "Speakers not separated",
-        "docs": {
-          "summary": "Summary",
-          "minutes": "Minutes",
-          "revised": "Revised transcript",
-          "revisedSrt": "Revised subtitles (SRT)",
-          "original": "Original transcript",
-          "originalSrt": "Original subtitles (SRT)"
-        },
-        "unfinished": "The meeting was interrupted before the transcript was finished. What was said is saved.",
-        "finalize": "Finish transcript",
-        "finalizeError": "Failed to finish the transcript: {{error}}",
-        "retryDiarization": "Try separating speakers again",
-        "aiPending": "Pending: transcript review, summary and minutes",
-        "generate": "Generate with AI",
-        "complete": "Complete with AI",
-        "generating": "Generating review, summary and minutes…",
-        "provider": "Uses the Post Processing provider: {{provider}} · {{model}}.",
-        "providerMissing": "Set a provider, model and API key in Post Processing.",
-        "textOnly": "Only the transcript text is sent, never the audio. The original transcript is not changed.",
-        "redo": "Redo with AI",
-        "redoConfirm": "Delete the AI-generated content and generate it again with {{model}}? The original transcript stays intact.",
-        "deleteAi": "Delete AI content",
-        "deleteAiConfirm": "Delete the summary, minutes and revised transcript? The original transcript and audio stay intact, and you can generate them again later (even with another model).",
-        "aiError": "AI step failed: {{error}}",
-        "openError": "Could not open the file: {{error}}"
-      },
       "notTranscribed": "Niet getranscribeerd. Je kunt het transcriberen via het herlaad-pictogram.",
       "transcribeFile": "Bestand transcriberen",
       "mediaFiles": "Audio en video",
@@ -1034,32 +982,7 @@
   "overlay": {
     "transcribing": "Transcriberen...",
     "processing": "Verwerken...",
-    "loadingModel": "Model laden...",
-    "meeting": {
-      "start": "Switch to meeting",
-      "stop": "End meeting",
-      "invite": "{{app}} call: transcribe the meeting?",
-      "inviteAction": "Transcribe",
-      "dismiss": "Dismiss",
-      "done": "Transcription finished",
-      "summarize": "Summarize with AI",
-      "openFolder": "Open folder",
-      "summarizing": "Generating summary...",
-      "suggest": "Call detected: switch to meeting",
-      "finishing": "Finishing transcript...",
-      "summarized": "Summary and minutes ready",
-      "copySummary": "Copy summary",
-      "copied": "Copied",
-      "stopTitle": "End meeting",
-      "stopRecorded": "{{time}} recorded",
-      "keepRecording": "Keep recording",
-      "stopTranscribe": "Finish and transcribe",
-      "stopSummarize": "Finish, transcribe and summarize",
-      "stopNothing": "End without processing",
-      "stopNothingHint": "Audio and live transcript are kept; finish it later from History",
-      "participants": "Participants (your name first)",
-      "participantsHint": "Names separated by commas, yours first. The AI uses them in the summary and minutes."
-    }
+    "loadingModel": "Model laden..."
   },
   "secureInput": {
     "blockedWithCulprit_one": "{{name}} blokkeert mogelijk 1 sneltoets",

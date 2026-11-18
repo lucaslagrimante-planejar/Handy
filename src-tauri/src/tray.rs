@@ -25,7 +25,7 @@ use crate::managers::model::{ModelInfo, ModelManager};
 use crate::managers::transcription::TranscriptionManager;
 use crate::notices::{self, NoticeCode};
 use crate::settings;
-use crate::tray_i18n::{get_tray_translations, TrayStrings};
+use crate::tray_i18n::get_tray_translations;
 use log::{debug, error, info, trace, warn};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -395,7 +395,7 @@ fn compute_desired(app: &AppHandle, icon_state: TrayIconState) -> TrayDesired {
             downloaded_models,
             locale: settings.app_language,
             update_checks_enabled: settings.update_checks_enabled,
-            meetings: crate::meeting::recent_meetings(app, MENU_MEETINGS),
+            meetings: crate::meeting::tray_ext::recent(app),
             language,
         },
     }
@@ -629,47 +629,6 @@ fn version_label() -> String {
 /// to app state: everything it depends on is in `inputs`, plus the
 /// process-constant `HANDY_DISABLE_UPDATER` env flag behind
 /// `update_checks_forced_disabled()`, which cannot change during a run.
-/// Meetings listed in the tray's "Meetings" submenu.
-const MENU_MEETINGS: usize = 8;
-
-/// One entry per recent meeting: run the AI step when it has not run yet,
-/// otherwise open the folder.
-fn build_meetings_submenu(
-    app: &AppHandle,
-    inputs: &MenuInputs,
-    strings: &TrayStrings,
-) -> tauri::Result<Submenu<tauri::Wry>> {
-    use crate::meeting::MeetingStage;
-
-    let submenu = Submenu::with_id(app, "meetings_submenu", &strings.meetings, true)?;
-    for meeting in &inputs.meetings {
-        let (id, action, enabled) = match meeting.stage {
-            MeetingStage::Transcribed => ("meeting_summarize", &strings.meeting_summarize, true),
-            MeetingStage::Summarizing => ("meeting_open", &strings.meeting_summarizing, false),
-            MeetingStage::Summarized => ("meeting_open", &strings.meeting_open, true),
-        };
-        let item = MenuItem::with_id(
-            app,
-            format!("{id}:{}", meeting.name),
-            format!("{} — {action}", meeting.label),
-            enabled,
-            None::<&str>,
-        )?;
-        submenu.append(&item)?;
-    }
-    if !inputs.meetings.is_empty() {
-        submenu.append(&PredefinedMenuItem::separator(app)?)?;
-    }
-    submenu.append(&MenuItem::with_id(
-        app,
-        "meetings_folder",
-        &strings.meetings_folder,
-        true,
-        None::<&str>,
-    )?)?;
-    Ok(submenu)
-}
-
 fn build_menu(app: &AppHandle, inputs: &MenuInputs) -> tauri::Result<(Menu<tauri::Wry>, String)> {
     let strings = get_tray_translations(Some(inputs.locale.clone()));
 
@@ -734,7 +693,7 @@ fn build_menu(app: &AppHandle, inputs: &MenuInputs) -> tauri::Result<(Menu<tauri
         None::<&str>,
     )?;
     let quit_i = MenuItem::with_id(app, "quit", &strings.quit, true, quit_accelerator)?;
-    let meetings_submenu = build_meetings_submenu(app, inputs, &strings)?;
+    let meetings_submenu = crate::meeting::tray_ext::submenu(app, &inputs.meetings, &strings)?;
     let separator = || PredefinedMenuItem::separator(app);
 
     let menu = if inputs.busy {
