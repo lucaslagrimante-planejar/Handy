@@ -518,7 +518,7 @@ impl MeetingModel {
             },
             Err(e) => {
                 warn!("Meeting model unavailable, using the dictation model: {e:#}");
-                dictation.initiate_model_load();
+                dictation.initiate_model_load(false);
                 Self {
                     tm: dictation,
                     dedicated: false,
@@ -533,7 +533,7 @@ impl MeetingModel {
             return;
         }
         if !self.dedicated {
-            self.tm.initiate_model_load();
+            self.tm.initiate_model_load(false);
         } else if let Err(e) = self.tm.load_model(MEETING_MODEL) {
             warn!("Failed to reload the meeting model: {e:#}");
         }
