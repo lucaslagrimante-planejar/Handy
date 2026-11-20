@@ -65,7 +65,7 @@
     "advanced": {
       "learnedWords": {
         "title": "Learned Words",
-        "description": "Re-transcribes unread dictations from the history with a more accurate downloaded model and asks the post-processing AI which terms the current model got wrong. The words found are used only with that model. Only text is sent to the AI, never audio.",
+        "description": "Re-transcribes unread dictations from the history with a more accurate downloaded model and asks the post-processing AI which terms the current model got wrong. The words found apply only to that model, and the number next to each counts the dictations it got it wrong in: the most misheard come first and are the last to go when the list fills up. Click a word to fix its spelling. Only text goes to the AI, never audio.",
         "auto": "Most accurate downloaded model",
         "learn": "Learn from history",
         "cancel": "Stop",
@@ -82,7 +82,20 @@
         "noReference": "No more accurate model downloaded to compare these models' dictations",
         "failed": "Could not learn words",
         "forModel": "Learned for {{model}} ({{count}})",
-        "clear": "Clear"
+        "clear": "Clear",
+        "reinforced": "Misheard again: {{words}}.",
+        "suspectsFound": "To review: {{words}}.",
+        "timesTooltip": "Misheard in {{count}} dictations",
+        "heardAs": "The model wrote: {{spellings}}",
+        "edit": "Fix {{word}}",
+        "suspects": {
+          "title": "To review ({{count}})",
+          "description": "Terms the AI saw were wrong or out of context but couldn't correct, like an internal product name. Type the right word to have it learned, or dismiss it.",
+          "placeholder": "Correct word",
+          "save": "Save",
+          "dismiss": "Dismiss",
+          "seen": "In {{count}} dictations"
+        }
       }
     }
   },

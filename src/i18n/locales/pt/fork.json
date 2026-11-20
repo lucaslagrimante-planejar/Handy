@@ -65,7 +65,7 @@
     "advanced": {
       "learnedWords": {
         "title": "Palavras Aprendidas",
-        "description": "Retranscreve os ditados ainda não lidos do histórico com um modelo baixado mais preciso e pede à IA de pós-processamento os termos que o modelo atual errou. As palavras encontradas valem só para esse modelo. Só texto vai para a IA, nunca áudio.",
+        "description": "Retranscreve os ditados ainda não lidos do histórico com um modelo baixado mais preciso e pede à IA de pós-processamento os termos que o modelo atual errou. As palavras encontradas valem só para esse modelo, e o número ao lado de cada uma conta em quantos ditados ele a errou: as mais erradas vêm primeiro e são as últimas a sair quando a lista enche. Clique numa palavra para corrigir a grafia. Só texto vai para a IA, nunca áudio.",
         "auto": "Modelo baixado mais preciso",
         "learn": "Aprender com o histórico",
         "cancel": "Parar",
@@ -82,7 +82,20 @@
         "noReference": "Nenhum modelo mais preciso baixado para comparar os ditados destes modelos",
         "failed": "Não foi possível aprender palavras",
         "forModel": "Aprendidas para {{model}} ({{count}})",
-        "clear": "Limpar"
+        "clear": "Limpar",
+        "reinforced": "Erradas de novo: {{words}}.",
+        "suspectsFound": "A revisar: {{words}}.",
+        "timesTooltip": "Errada em {{count}} ditados",
+        "heardAs": "O modelo escreveu: {{spellings}}",
+        "edit": "Corrigir {{word}}",
+        "suspects": {
+          "title": "A revisar ({{count}})",
+          "description": "Termos que a IA percebeu que estão errados ou fora de contexto, mas não soube corrigir, como o nome de um produto interno. Escreva a palavra certa para ela passar a ser aprendida, ou ignore.",
+          "placeholder": "Palavra certa",
+          "save": "Salvar",
+          "dismiss": "Ignorar",
+          "seen": "Em {{count}} ditados"
+        }
       }
     }
   },

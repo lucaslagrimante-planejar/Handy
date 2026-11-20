@@ -2,7 +2,7 @@
 
 | Versão | Atualizado em |
 | ------ | ------------- |
-| 3      | 18/11/2026    |
+| 4      | 18/11/2026    |
 
 Funcionalidade própria deste fork. Em **Avançado → Palavras Aprendidas**, o botão "Aprender com o
 histórico" lê os ditados ainda não lidos e descobre os termos que o modelo de ditado errou. Esses
@@ -30,14 +30,44 @@ nunca áudio, e para o provedor de pós-processamento que o usuário configurou.
    continua carregado durante a análise.
 3. Manda à IA de pós-processamento lotes de até cerca de 6 mil caracteres, com três textos por
    ditado: A (o que o modelo escreveu), B (a referência) e C (o texto pós-processado, quando
-   existe). A IA devolve, em JSON, os termos que o modelo grafou errado.
-4. Um filtro determinístico confere cada termo proposto. Ele só fica se:
+   existe). A IA devolve, em JSON:
+   - `words`: os termos que o modelo grafou errado, com a grafia certa e como A escreveu
+     (`heard_as`). Inclui palavras já aprendidas que o modelo errou de novo;
+   - `unknown`: termos de A que parecem errados ou fora de contexto, mas cuja forma certa nem B nem
+     C mostram (um produto interno que nenhum dos dois modelos conhece), com um trecho de contexto.
+4. Um filtro determinístico confere cada termo de `words`. Ele só conta se:
    - aparece em B ou C e não aparece em A, comparando palavra inteira e sem diferenciar
      maiúsculas;
    - tem de 2 a 50 caracteres;
-   - ainda não é palavra conhecida, manual ou já aprendida.
-5. Salva os termos aceitos em `learned_vocabulary.json`, no diretório de dados do app, com limite
-   de 40 por modelo; ao estourar, saem os mais antigos. Os ditados do lote são marcados como lidos.
+   - não é palavra manual do usuário.
+
+   O termo conta **um por ditado** em que essa evidência vale. Para `unknown`, o termo precisa
+   aparecer em A, não ser palavra conhecida e não estar explicado por um termo de `words`.
+
+5. Grava em `learned_vocabulary.json`, no diretório de dados do app, e marca os ditados do lote como
+   lidos (ver [Contador, edição e termos a revisar](#contador-edição-e-termos-a-revisar)).
+
+## Contador, edição e termos a revisar
+
+Cada palavra aprendida guarda `count` (em quantos ditados o modelo a errou), as grafias que o modelo
+usou (`heard_as`, até 6) e `last_seen`. Uma palavra já aprendida que o modelo erra de novo soma ao
+contador em vez de ser descartada, então as mais erradas ficam evidentes:
+
+- **Ordem:** na tela e na lista enviada ao modelo, das mais erradas para as menos, depois as mais
+  recentes.
+- **Limite:** continua 40 por modelo. Ao estourar, sai a mais fraca (menor contador, depois a mais
+  antiga), não a mais antiga.
+- **Edição:** clicar na palavra abre a edição da grafia, que mantém o contador. Se a nova grafia já
+  existe, as duas se juntam e os contadores somam.
+
+Os termos de `unknown` viram **suspeitos**, na seção "A revisar" da tela, com contador e contexto. O
+usuário escreve a palavra certa (o suspeito vira palavra aprendida com o contador que tinha) ou
+ignora (o suspeito fica guardado como dispensado, para não voltar). Se um aprendizado posterior
+descobrir a grafia certa de um suspeito, ele se junta à palavra. Até 40 suspeitos por modelo, saindo
+os mais fracos.
+
+O arquivo da primeira versão (lista simples de palavras por modelo) continua sendo lido: cada palavra
+entra com contador 1.
 
 ## Modelo de referência
 
@@ -60,10 +90,10 @@ vivo não são afetadas.
 
 ## Arquivos
 
-| Arquivo                                               | Responsabilidade                                                 |
-| ----------------------------------------------------- | ---------------------------------------------------------------- |
-| `src-tauri/src/vocabulary/learn.rs`                   | Orquestra o fluxo, o prompt, o filtro e a escolha da referência  |
-| `src-tauri/src/vocabulary/store.rs`                   | `learned_vocabulary.json`, cache em memória, merge e limite      |
-| `src-tauri/src/commands/vocabulary.rs`                | Comandos Tauri (aprender, cancelar, remover, limpar, referência) |
-| `src/components/settings/vocabulary/LearnedWords.tsx` | Botão, progresso, seletor de referência e lista do modelo atual  |
-| `src-tauri/src/managers/history.rs`                   | Colunas `model_id`/`vocab_reviewed`, consultas de pendentes      |
+| Arquivo                                               | Responsabilidade                                                  |
+| ----------------------------------------------------- | ----------------------------------------------------------------- |
+| `src-tauri/src/vocabulary/learn.rs`                   | Orquestra o fluxo, o prompt, o filtro e a escolha da referência   |
+| `src-tauri/src/vocabulary/store.rs`                   | `learned_vocabulary.json`, contador, suspeitos, edição e limite   |
+| `src-tauri/src/commands/vocabulary.rs`                | Comandos Tauri (aprender, editar, remover, suspeitos, referência) |
+| `src/components/settings/vocabulary/LearnedWords.tsx` | Botão, progresso, seletor de referência e lista do modelo atual   |
+| `src-tauri/src/managers/history.rs`                   | Colunas `model_id`/`vocab_reviewed`, consultas de pendentes       |

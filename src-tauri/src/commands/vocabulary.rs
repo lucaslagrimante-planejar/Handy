@@ -36,8 +36,64 @@ pub fn remove_learned_word(
     word: String,
 ) -> Result<LearnedVocabulary, String> {
     store::update(&app, |vocabulary| {
-        if let Some(words) = vocabulary.models.get_mut(&model_id) {
-            words.retain(|w| w != &word);
+        if let Some(model) = vocabulary.models.get_mut(&model_id) {
+            model.words.retain(|w| w.word != word);
+        }
+    })
+    .map_err(to_string)
+}
+
+/// Fixes a learned word's spelling, keeping its count.
+#[tauri::command]
+#[specta::specta]
+pub fn rename_learned_word(
+    app: AppHandle,
+    model_id: String,
+    word: String,
+    new_word: String,
+) -> Result<LearnedVocabulary, String> {
+    store::update(&app, |vocabulary| {
+        if let Some(model) = vocabulary.models.get_mut(&model_id) {
+            store::rename_word(model, &word, &new_word);
+        }
+    })
+    .map_err(to_string)
+}
+
+/// Names a term the AI couldn't correct: it becomes a learned word.
+#[tauri::command]
+#[specta::specta]
+pub fn resolve_vocabulary_suspect(
+    app: AppHandle,
+    model_id: String,
+    heard_as: String,
+    word: String,
+) -> Result<LearnedVocabulary, String> {
+    store::update(&app, |vocabulary| {
+        if let Some(model) = vocabulary.models.get_mut(&model_id) {
+            store::resolve_suspect(
+                model,
+                &heard_as,
+                &word,
+                store::now(),
+                learn::MAX_WORDS_PER_MODEL,
+            );
+        }
+    })
+    .map_err(to_string)
+}
+
+/// Hides a suspect for good: it isn't suggested again.
+#[tauri::command]
+#[specta::specta]
+pub fn dismiss_vocabulary_suspect(
+    app: AppHandle,
+    model_id: String,
+    heard_as: String,
+) -> Result<LearnedVocabulary, String> {
+    store::update(&app, |vocabulary| {
+        if let Some(model) = vocabulary.models.get_mut(&model_id) {
+            store::dismiss_suspect(model, &heard_as);
         }
     })
     .map_err(to_string)

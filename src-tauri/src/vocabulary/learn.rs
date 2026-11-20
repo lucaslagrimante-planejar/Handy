@@ -6,7 +6,12 @@
 //!
 //! What the AI proposes is checked against the texts before it is kept: a
 //! word must be in the reference (or post-processed) text and missing from
-//! what the dictation model wrote.
+//! what the dictation model wrote. Each word counts the dictations it was
+//! misheard in, also after it is learned, so the strongest stand out.
+//!
+//! The AI also names terms that look wrong in what the model wrote but that
+//! no text corrects (an internal product name neither model knows). Those
+//! wait as suspects, with their count, for the user to name or dismiss.
 //!
 //! Dictation only, both ways: it reads only the dictation history
 //! (`transcription_history`, which meetings never write; their audio lives
@@ -25,7 +30,7 @@ use serde_json::json;
 use specta::Type;
 use tauri::{AppHandle, Emitter, Manager};
 
-use super::store::{self, contains_ignoring_case};
+use super::store::{self, contains_ignoring_case, Hit, SuspectHit};
 use crate::audio_toolkit::read_wav_samples;
 use crate::managers::history::{HistoryManager, VocabularySample};
 use crate::managers::model::{ModelInfo, ModelManager};
@@ -39,6 +44,10 @@ const MAX_ENTRIES_PER_RUN: usize = 40;
 /// Learned words kept per model. Too many custom words make a model worse
 /// (Whisper even reads them back), so the oldest make room for new ones.
 pub const MAX_WORDS_PER_MODEL: usize = 40;
+/// Suspects kept per model, dismissed ones included.
+pub const MAX_SUSPECTS_PER_MODEL: usize = 40;
+/// Characters of a suspect's context excerpt.
+const MAX_CONTEXT_CHARS: usize = 160;
 /// Characters of transcripts per AI request.
 const BATCH_CHARS: usize = 6_000;
 /// Longer dictations are skipped rather than re-transcribed.
@@ -76,6 +85,10 @@ pub struct LearnReport {
     pub analyzed: u32,
     /// New words per model id.
     pub learned: BTreeMap<String, Vec<String>>,
+    /// Words already learned that were misheard again, per model id.
+    pub reinforced: BTreeMap<String, Vec<String>>,
+    /// Terms the AI couldn't correct, new or seen again, per model id.
+    pub suspects: BTreeMap<String, Vec<String>>,
     /// Models whose dictations were left unread: no more accurate model is
     /// downloaded to compare them with.
     pub without_reference: Vec<String>,
@@ -91,18 +104,26 @@ struct Pair {
     post_processed: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 struct Finding {
     word: String,
     #[serde(default)]
-    #[allow(dead_code)]
     heard_as: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+struct Unknown {
+    heard_as: String,
+    #[serde(default)]
+    context: String,
+}
+
+#[derive(Debug, Default, Deserialize, PartialEq)]
 struct Findings {
     #[serde(default)]
     words: Vec<Finding>,
+    #[serde(default)]
+    unknown: Vec<Unknown>,
 }
 
 struct RunningGuard;
@@ -220,23 +241,37 @@ pub async fn learn(app: AppHandle) -> Result<LearnReport> {
         let answer = llm
             .ask(SYSTEM_PROMPT, render_batch(batch, &known), Some(schema()))
             .await?;
-        let proposed = parse_findings(&answer)?;
-        let accepted = filter_candidates(&proposed, batch, &known);
+        let findings = parse_findings(&answer)?;
+        let hits = filter_candidates(&findings.words, batch, &manual);
+        let suspects = filter_suspects(&findings.unknown, batch, &known, &hits);
         info!(
-            "Vocabulary learning for {model_id}: {} proposed, {} kept",
-            proposed.len(),
-            accepted.len()
+            "Vocabulary learning for {model_id}: {} proposed, {} kept, {} suspects",
+            findings.words.len(),
+            hits.len(),
+            suspects.len()
         );
-        if !accepted.is_empty() {
+        if !hits.is_empty() || !suspects.is_empty() {
+            let now = store::now();
+            let mut learned_before = Vec::new();
             store::update(&app, |vocabulary| {
-                let learned = vocabulary.models.entry(model_id.clone()).or_default();
-                store::merge_learned(learned, &accepted, MAX_WORDS_PER_MODEL);
+                let model = vocabulary.models.entry(model_id.clone()).or_default();
+                learned_before = model.words.iter().map(|w| w.word.clone()).collect();
+                store::record_hits(model, &hits, now, MAX_WORDS_PER_MODEL);
+                store::record_suspects(model, &suspects, now, MAX_SUSPECTS_PER_MODEL);
             })?;
+            for hit in hits {
+                let list = if contains_ignoring_case(&learned_before, &hit.word) {
+                    &mut report.reinforced
+                } else {
+                    &mut report.learned
+                };
+                list.entry(model_id.clone()).or_default().push(hit.word);
+            }
             report
-                .learned
+                .suspects
                 .entry(model_id.clone())
                 .or_default()
-                .extend(accepted);
+                .extend(suspects.into_iter().map(|s| s.heard_as));
         }
         let ids: Vec<i64> = batch.iter().map(|pair| pair.id).collect();
         hm.mark_vocabulary_reviewed(&ids)?;
@@ -378,13 +413,18 @@ Para cada ditado você recebe:\n\
 A: o que o modelo de ditado transcreveu (pode ter erros);\n\
 B: a transcrição do mesmo áudio por um modelo mais preciso (referência);\n\
 C (às vezes): o texto final revisado.\n\
-Encontre termos que o modelo de ditado escreveu errado e que valeria ensinar a ele como vocabulário: \
+1. Em \"words\", liste os termos que o modelo de ditado escreveu errado e que valeria ensinar a ele como vocabulário: \
 nomes próprios, nomes de produtos e empresas, siglas, termos técnicos, jargões, palavras estrangeiras ou incomuns. \
-Dê a grafia correta como aparece em B ou C.\n\
-Ignore: diferenças só de pontuação, maiúsculas ou acentos; palavras comuns do idioma; números; \
-trechos em que B também parece errado; termos da lista de já conhecidos.\n\
-Responda só com JSON no formato {\"words\":[{\"word\":\"grafia correta\",\"heard_as\":[\"como A escreveu\"]}]}. \
-Sem nada a ensinar, responda {\"words\":[]}.";
+Dê a grafia correta como aparece em B ou C, e em heard_as como A escreveu. \
+Inclua também os termos da lista de já conhecidos que A escreveu errado de novo: isso conta quantas vezes o modelo erra cada um.\n\
+2. Em \"unknown\", liste os termos de A que parecem errados ou fora de contexto (provavelmente um nome, produto interno ou sigla \
+que o modelo não conhece), mas cuja forma certa nem B nem C mostram. Dê heard_as exatamente como aparece em A \
+e context com um trecho curto de A em volta dele. Não repita aqui o que já está em \"words\".\n\
+Ignore nos dois: diferenças só de pontuação, maiúsculas ou acentos; palavras comuns do idioma usadas no sentido certo; números; \
+trechos em que B também parece errado mas A está certo.\n\
+Responda só com JSON no formato \
+{\"words\":[{\"word\":\"grafia correta\",\"heard_as\":[\"como A escreveu\"]}],\"unknown\":[{\"heard_as\":\"como A escreveu\",\"context\":\"trecho de A\"}]}. \
+Sem nada a apontar, responda {\"words\":[],\"unknown\":[]}.";
 
 fn schema() -> serde_json::Value {
     json!({
@@ -401,9 +441,21 @@ fn schema() -> serde_json::Value {
                     "required": ["word", "heard_as"],
                     "additionalProperties": false
                 }
+            },
+            "unknown": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "heard_as": { "type": "string" },
+                        "context": { "type": "string" }
+                    },
+                    "required": ["heard_as", "context"],
+                    "additionalProperties": false
+                }
             }
         },
-        "required": ["words"],
+        "required": ["words", "unknown"],
         "additionalProperties": false
     })
 }
@@ -428,47 +480,119 @@ fn render_batch(batch: &[Pair], known: &[String]) -> String {
     out
 }
 
-/// The words in the AI's answer, tolerating a code fence or text around the
-/// JSON object.
-fn parse_findings(answer: &str) -> Result<Vec<String>> {
+/// The AI's findings, tolerating a code fence or text around the JSON
+/// object.
+fn parse_findings(answer: &str) -> Result<Findings> {
     let start = answer.find('{');
     let end = answer.rfind('}');
     let json = match (start, end) {
         (Some(start), Some(end)) if start < end => &answer[start..=end],
         _ => bail!("A IA não respondeu no formato esperado"),
     };
-    let findings: Findings = serde_json::from_str(json)
-        .map_err(|e| anyhow!("A IA não respondeu no formato esperado: {e}"))?;
-    Ok(findings.words.into_iter().map(|f| f.word).collect())
+    serde_json::from_str(json).map_err(|e| anyhow!("A IA não respondeu no formato esperado: {e}"))
 }
 
-/// The proposed words worth keeping: the right length, not known yet, and in
-/// some dictation's reference or post-processed text while missing from what
-/// the dictation model wrote. Repeats are dropped.
-fn filter_candidates(proposed: &[String], batch: &[Pair], known: &[String]) -> Vec<String> {
-    let mut accepted: Vec<String> = Vec::new();
-    for word in proposed {
-        let word = clean_word(word);
-        let chars = word.chars().count();
-        if !(MIN_WORD_CHARS..=MAX_WORD_CHARS).contains(&chars)
-            || contains_ignoring_case(known, &word)
-            || contains_ignoring_case(&accepted, &word)
+fn usable_length(word: &str) -> bool {
+    (MIN_WORD_CHARS..=MAX_WORD_CHARS).contains(&word.chars().count())
+}
+
+/// The proposed words worth keeping, each with the dictations it was
+/// misheard in: in the reference or post-processed text while missing from
+/// what the dictation model wrote. The user's own words are left out; the
+/// learned ones count again. Repeats merge.
+fn filter_candidates(proposed: &[Finding], batch: &[Pair], manual: &[String]) -> Vec<Hit> {
+    let mut hits: Vec<Hit> = Vec::new();
+    for finding in proposed {
+        let word = clean_word(&finding.word);
+        if !usable_length(&word) || contains_ignoring_case(manual, &word) {
+            continue;
+        }
+        let misheard = batch
+            .iter()
+            .filter(|pair| {
+                let corrected = contains_term(&pair.reference, &word)
+                    || pair
+                        .post_processed
+                        .as_deref()
+                        .is_some_and(|text| contains_term(text, &word));
+                corrected && !contains_term(&pair.original, &word)
+            })
+            .count() as u32;
+        if misheard == 0 {
+            continue;
+        }
+        let heard_as: Vec<String> = finding
+            .heard_as
+            .iter()
+            .map(|h| clean_word(h))
+            .filter(|h| usable_length(h))
+            .collect();
+        let lower = word.to_lowercase();
+        match hits.iter_mut().find(|h| h.word.to_lowercase() == lower) {
+            // The same word twice in one answer is the same dictations.
+            Some(hit) => {
+                for spelling in heard_as {
+                    if !contains_ignoring_case(&hit.heard_as, &spelling) {
+                        hit.heard_as.push(spelling);
+                    }
+                }
+            }
+            None => hits.push(Hit {
+                word,
+                heard_as,
+                dictations: misheard,
+            }),
+        }
+    }
+    hits
+}
+
+/// The terms the AI couldn't correct, each with the dictations whose model
+/// text has it. Known words and what `hits` already explain are left out.
+fn filter_suspects(
+    unknown: &[Unknown],
+    batch: &[Pair],
+    known: &[String],
+    hits: &[Hit],
+) -> Vec<SuspectHit> {
+    let mut suspects: Vec<SuspectHit> = Vec::new();
+    for finding in unknown {
+        let heard_as = clean_word(&finding.heard_as);
+        let explained = hits.iter().any(|hit| {
+            hit.word.to_lowercase() == heard_as.to_lowercase()
+                || contains_ignoring_case(&hit.heard_as, &heard_as)
+        });
+        if !usable_length(&heard_as)
+            || explained
+            || contains_ignoring_case(known, &heard_as)
+            || suspects
+                .iter()
+                .any(|s| s.heard_as.to_lowercase() == heard_as.to_lowercase())
         {
             continue;
         }
-        let misheard = batch.iter().any(|pair| {
-            let corrected = contains_term(&pair.reference, &word)
-                || pair
-                    .post_processed
-                    .as_deref()
-                    .is_some_and(|text| contains_term(text, &word));
-            corrected && !contains_term(&pair.original, &word)
-        });
-        if misheard {
-            accepted.push(word);
+        let dictations = batch
+            .iter()
+            .filter(|pair| contains_term(&pair.original, &heard_as))
+            .count() as u32;
+        if dictations == 0 {
+            continue;
         }
+        let context: String = finding
+            .context
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(MAX_CONTEXT_CHARS)
+            .collect();
+        suspects.push(SuspectHit {
+            heard_as,
+            context,
+            dictations,
+        });
     }
-    accepted
+    suspects
 }
 
 /// Same normalisation as the custom words field in settings.
@@ -513,23 +637,60 @@ mod tests {
         list.iter().map(|w| w.to_string()).collect()
     }
 
+    fn found(list: &[&str]) -> Vec<Finding> {
+        list.iter()
+            .map(|w| Finding {
+                word: w.to_string(),
+                heard_as: Vec::new(),
+            })
+            .collect()
+    }
+
+    fn kept_words(hits: &[Hit]) -> Vec<String> {
+        hits.iter().map(|h| h.word.clone()).collect()
+    }
+
+    fn unknown(heard_as: &str, context: &str) -> Unknown {
+        Unknown {
+            heard_as: heard_as.into(),
+            context: context.into(),
+        }
+    }
+
     #[test]
     fn keeps_a_term_the_reference_has_and_the_dictation_missed() {
         let batch = [pair(1, "abre o jay que grid", "abre o jqGrid", None)];
-        let kept = filter_candidates(&words(&["jqGrid"]), &batch, &[]);
-        assert_eq!(kept, words(&["jqGrid"]));
+        let kept = filter_candidates(&found(&["jqGrid"]), &batch, &[]);
+        assert_eq!(kept_words(&kept), words(&["jqGrid"]));
+        assert_eq!(kept[0].dictations, 1);
+    }
+
+    #[test]
+    fn counts_the_dictations_a_word_was_misheard_in() {
+        let batch = [
+            pair(1, "abre o jay que grid", "abre o jqGrid", None),
+            pair(2, "o jqGrid travou", "o jqGrid travou", None),
+            pair(3, "fecha o jota que grid", "fecha o jqGrid", None),
+        ];
+        let proposed = [Finding {
+            word: "jqGrid".into(),
+            heard_as: words(&["jay que grid", "jota que grid"]),
+        }];
+        let kept = filter_candidates(&proposed, &batch, &[]);
+        assert_eq!(kept[0].dictations, 2);
+        assert_eq!(kept[0].heard_as, words(&["jay que grid", "jota que grid"]));
     }
 
     #[test]
     fn drops_a_term_the_dictation_already_wrote() {
         let batch = [pair(1, "o siplan caiu", "o Siplan caiu", None)];
-        assert!(filter_candidates(&words(&["Siplan"]), &batch, &[]).is_empty());
+        assert!(filter_candidates(&found(&["Siplan"]), &batch, &[]).is_empty());
     }
 
     #[test]
     fn drops_a_term_no_text_supports() {
         let batch = [pair(1, "abre o arquivo", "abre o arquivo", None)];
-        assert!(filter_candidates(&words(&["Kubernetes"]), &batch, &[]).is_empty());
+        assert!(filter_candidates(&found(&["Kubernetes"]), &batch, &[]).is_empty());
     }
 
     #[test]
@@ -540,19 +701,64 @@ mod tests {
             "roda o cloud code",
             Some("roda o Claude Code"),
         )];
-        let kept = filter_candidates(&words(&["Claude Code"]), &batch, &[]);
-        assert_eq!(kept, words(&["Claude Code"]));
+        let kept = filter_candidates(&found(&["Claude Code"]), &batch, &[]);
+        assert_eq!(kept_words(&kept), words(&["Claude Code"]));
     }
 
     #[test]
-    fn drops_known_words_repeats_and_bad_lengths() {
+    fn drops_the_users_words_repeats_and_bad_lengths() {
         let batch = [pair(1, "x", "Handy jqGrid Z", None)];
         let kept = filter_candidates(
-            &words(&["handy", "jqGrid", "JQGRID", "Z", "\"jqGrid\""]),
+            &found(&["handy", "jqGrid", "JQGRID", "Z", "\"jqGrid\""]),
             &batch,
             &words(&["Handy"]),
         );
-        assert_eq!(kept, words(&["jqGrid"]));
+        assert_eq!(kept_words(&kept), words(&["jqGrid"]));
+        assert_eq!(kept[0].dictations, 1);
+    }
+
+    #[test]
+    fn a_suspect_must_be_in_what_the_model_wrote() {
+        let batch = [
+            pair(1, "abre o sisplan agora", "abre o sisplan agora", None),
+            pair(2, "o sisplan caiu", "o sisplan caiu", None),
+        ];
+        let suspects = filter_suspects(
+            &[
+                unknown("sisplan", "abre o sisplan agora"),
+                unknown("Sisplan", "repetido"),
+                unknown("inventado", "não está em A"),
+            ],
+            &batch,
+            &[],
+            &[],
+        );
+        assert_eq!(suspects.len(), 1);
+        assert_eq!(suspects[0].heard_as, "sisplan");
+        assert_eq!(suspects[0].dictations, 2);
+        assert_eq!(suspects[0].context, "abre o sisplan agora");
+    }
+
+    #[test]
+    fn a_suspect_already_explained_or_known_is_dropped() {
+        let batch = [pair(
+            1,
+            "o jay que grid e o handy",
+            "o jqGrid e o Handy",
+            None,
+        )];
+        let hits = [Hit {
+            word: "jqGrid".into(),
+            heard_as: words(&["jay que grid"]),
+            dictations: 1,
+        }];
+        let suspects = filter_suspects(
+            &[unknown("jay que grid", ""), unknown("handy", "")],
+            &batch,
+            &words(&["Handy"]),
+            &hits,
+        );
+        assert!(suspects.is_empty());
     }
 
     #[test]
@@ -564,10 +770,19 @@ mod tests {
 
     #[test]
     fn reads_the_answer_inside_a_code_fence() {
-        let answer =
-            "```json\n{\"words\":[{\"word\":\"jqGrid\",\"heard_as\":[\"jay que grid\"]}]}\n```";
-        assert_eq!(parse_findings(answer).unwrap(), words(&["jqGrid"]));
+        let answer = "```json\n{\"words\":[{\"word\":\"jqGrid\",\"heard_as\":[\"jay que grid\"]}],\
+            \"unknown\":[{\"heard_as\":\"sisplan\",\"context\":\"o sisplan caiu\"}]}\n```";
+        let findings = parse_findings(answer).unwrap();
+        assert_eq!(findings.words[0].word, "jqGrid");
+        assert_eq!(findings.words[0].heard_as, words(&["jay que grid"]));
+        assert_eq!(findings.unknown, vec![unknown("sisplan", "o sisplan caiu")]);
         assert!(parse_findings("não sei").is_err());
+    }
+
+    #[test]
+    fn an_answer_without_unknown_still_reads() {
+        let findings = parse_findings(r#"{"words":[]}"#).unwrap();
+        assert!(findings.unknown.is_empty());
     }
 
     #[test]

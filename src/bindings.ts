@@ -763,6 +763,39 @@ async removeLearnedWord(modelId: string, word: string) : Promise<Result<LearnedV
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Fixes a learned word's spelling, keeping its count.
+ */
+async renameLearnedWord(modelId: string, word: string, newWord: string) : Promise<Result<LearnedVocabulary, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("rename_learned_word", { modelId, word, newWord }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Names a term the AI couldn't correct: it becomes a learned word.
+ */
+async resolveVocabularySuspect(modelId: string, heardAs: string, word: string) : Promise<Result<LearnedVocabulary, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("resolve_vocabulary_suspect", { modelId, heardAs, word }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Hides a suspect for good: it isn't suggested again.
+ */
+async dismissVocabularySuspect(modelId: string, heardAs: string) : Promise<Result<LearnedVocabulary, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dismiss_vocabulary_suspect", { modelId, heardAs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async clearLearnedWords(modelId: string) : Promise<Result<LearnedVocabulary, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("clear_learned_words", { modelId }) };
@@ -1540,20 +1573,41 @@ analyzed: number;
  */
 learned: Partial<{ [key in string]: string[] }>; 
 /**
- * Models whose dictations were left unread: no other model is
+ * Words already learned that were misheard again, per model id.
+ */
+reinforced: Partial<{ [key in string]: string[] }>; 
+/**
+ * Terms the AI couldn't correct, new or seen again, per model id.
+ */
+suspects: Partial<{ [key in string]: string[] }>; 
+/**
+ * Models whose dictations were left unread: no more accurate model is
  * downloaded to compare them with.
  */
 without_reference: string[]; cancelled: boolean }
 export type LearnedVocabulary = { 
 /**
- * Words per model id, oldest first.
+ * Learned words and suspects per model id.
  */
-models?: Partial<{ [key in string]: string[] }>; 
+models?: Partial<{ [key in string]: ModelVocabulary }>; 
 /**
  * Model that re-transcribes the history; `None` picks the most accurate
  * downloaded one.
  */
 reference_model?: string | null }
+export type LearnedWord = { word: string; 
+/**
+ * Dictations the model got it wrong in.
+ */
+count: number; 
+/**
+ * How the model wrote it, most recent first.
+ */
+heard_as?: string[]; 
+/**
+ * When it was last misheard, Unix seconds.
+ */
+last_seen?: number }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
 /**
  * A macOS privacy permission Handy asks for during onboarding.
@@ -1625,6 +1679,7 @@ sha256: string | null } } |
  */
 "Local"
 export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_15"
+export type ModelVocabulary = { words?: LearnedWord[]; suspects?: Suspect[] }
 export type Notice = { code: NoticeCode; level: NoticeLevel; source: NoticeSource; 
 /**
  * What only Rust knows, such as a model name or a raw error.
@@ -1812,6 +1867,26 @@ export type StreamTextEvent = { committed: string; tentative: string }
  * Semantic kind of "working" phase, used to localize the spinner label.
  */
 export type StreamWorkKind = "transcribing" | "polishing"
+/**
+ * A term the AI saw was wrong but couldn't correct.
+ */
+export type Suspect = { 
+/**
+ * The term as the model wrote it.
+ */
+heard_as: string; 
+/**
+ * Dictations it showed up in.
+ */
+count: number; 
+/**
+ * A short excerpt around it, from the latest dictation.
+ */
+context?: string; last_seen?: number; 
+/**
+ * Dismissed by the user: kept so it isn't suggested again, never shown.
+ */
+dismissed?: boolean }
 /**
  * UI appearance mode. `System` follows the OS `prefers-color-scheme`; `Light`
  * and `Dark` force one of the two palettes Handy already ships.
